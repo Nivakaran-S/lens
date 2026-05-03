@@ -18,7 +18,12 @@ export const jobsRoute = new Hono<AuthEnv>();
 jobsRoute.use('*', requireAuth);
 
 jobsRoute.post('/', async (c) => {
+  const tStart = Date.now();
+  const mark = (label: string) => console.log(`[POST /jobs] ${label} t+${Date.now() - tStart}ms`);
+  mark('handler entered');
+
   const body = await c.req.json().catch(() => null);
+  mark('body parsed');
   const parsed = createJobSchema.safeParse(body);
   if (!parsed.success) {
     throw new HTTPException(400, { message: 'Invalid body' });
@@ -32,6 +37,7 @@ jobsRoute.post('/', async (c) => {
 
   const user = c.get('user');
 
+  mark('insertJob start');
   const job = await insertJob({
     user_id: user.id,
     zip_filename: parsed.data.filename,
@@ -39,17 +45,24 @@ jobsRoute.post('/', async (c) => {
     zip_storage_path: 'pending',
     status: 'queued',
   });
+  mark('insertJob done');
 
   const path = zipStoragePath(user.id, job.id, parsed.data.filename);
-  await updateJob(job.id, { zip_storage_path: path });
 
+  mark('updateJob start');
+  await updateJob(job.id, { zip_storage_path: path });
+  mark('updateJob done');
+
+  mark('createSignedUploadUrl start');
   const { data: signed, error: signErr } = await supabaseAdmin()
     .storage.from(STORAGE_BUCKET)
     .createSignedUploadUrl(path);
+  mark(`createSignedUploadUrl done, error=${!!signErr}`);
   if (signErr || !signed) {
     throw new HTTPException(500, { message: 'Failed to create upload URL', cause: signErr });
   }
 
+  mark('about to return JSON');
   return c.json({
     jobId: job.id,
     storagePath: path,

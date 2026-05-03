@@ -26,15 +26,18 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
     throw new HTTPException(401, { message: 'Missing bearer token' });
   }
 
+  const t0 = Date.now();
   try {
+    console.log('[auth] calling supabase.auth.getUser');
     const { data, error } = await supabaseAdmin().auth.getUser(token);
+    console.log(`[auth] getUser done in ${Date.now() - t0}ms, error=${!!error}`);
     if (error || !data?.user) {
       throw new HTTPException(401, { message: 'Invalid token', cause: error ?? undefined });
     }
     c.set('user', { id: data.user.id, email: data.user.email });
   } catch (err) {
     if (err instanceof HTTPException) throw err;
-    console.error('[auth] supabase.auth.getUser failed', err);
+    console.error(`[auth] supabase.auth.getUser failed after ${Date.now() - t0}ms`, err);
     throw new HTTPException(401, { message: 'Invalid token', cause: err });
   }
 
