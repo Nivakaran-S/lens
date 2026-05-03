@@ -89,23 +89,53 @@ If all of the above works, Phase 1 is done.
 
 ---
 
-## 5. Deploy to Vercel (optional, can wait until later phases)
+## 5. Deploy to Vercel
 
-You'll create **two separate Vercel projects**, one per folder:
+> ⚠️ **Critical**: this is a monorepo with **two** apps that need **two separate Vercel projects**. Importing the repo root as a single project will fail with `Invalid export found in module ".../backend/src/app.js"` because Vercel can't find a framework at the root and bundles the wrong files.
+>
+> If you already created a single project for the repo root, **delete it** first (Vercel dashboard → project → Settings → Advanced → Delete Project) before following the steps below.
 
-### Backend project (`lens-api`)
+### A. Backend project — `lens-api`
 
-1. `vercel link` from `backend/` (or import the repo and set Root Directory to `backend`).
-2. Add env vars in **Project settings → Environment Variables**: same keys as `.env.local`.
-3. Set `CORS_ORIGINS` to your frontend Vercel URL (e.g. `https://lens-web.vercel.app`).
-4. Deploy.
+1. Vercel dashboard → **Add New… → Project** → import `Nivakaran-S/lens`.
+2. **Project Name**: `lens-api`
+3. **Root Directory**: click **Edit** and set to `backend` (this is the most important step).
+4. **Framework Preset**: leave as **Other** (Vercel will auto-detect the `vercel.json`).
+5. **Build & Output Settings**: leave defaults — `vercel.json` controls them.
+6. **Environment Variables** — add all of these:
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `GEMINI_API_KEY`
+   - `INNGEST_EVENT_KEY` (from app.inngest.com)
+   - `INNGEST_SIGNING_KEY`
+   - `CORS_ORIGINS` — set to the frontend Vercel URL once you have it (e.g. `https://lens-web.vercel.app`). For now leave as `https://lens-web.vercel.app` — you can always edit later.
+7. Click **Deploy**.
+8. After deploy, hit `https://<your-backend>.vercel.app/api/health` — should return `{"ok":true,"service":"lens-api",...}`. If you get the "Invalid export" error, double-check **Root Directory = `backend`**.
 
-### Frontend project (`lens-web`)
+### B. Frontend project — `lens-web`
 
-1. `vercel link` from `frontend/` (or import with Root Directory `frontend`).
-2. Add env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_BASE_URL` (the backend Vercel URL).
-3. Update Supabase **URL Configuration** to add the production Site URL and `/auth/callback` redirect URL.
-4. Deploy.
+1. Vercel dashboard → **Add New… → Project** → import `Nivakaran-S/lens` again (same repo, second project).
+2. **Project Name**: `lens-web`
+3. **Root Directory**: click **Edit** and set to `frontend`.
+4. **Framework Preset**: should auto-detect as **Next.js**.
+5. **Environment Variables**:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `NEXT_PUBLIC_API_BASE_URL` — set to the backend's Vercel URL (e.g. `https://lens-api.vercel.app`)
+6. Click **Deploy**.
+
+### C. After both projects exist
+
+1. Go back to `lens-api` → **Settings → Environment Variables** → update `CORS_ORIGINS` to the actual frontend URL (e.g. `https://lens-web.vercel.app`). Redeploy `lens-api` so the CORS env reloads.
+2. **Supabase → Authentication → URL Configuration**:
+   - Add `https://lens-web.vercel.app` to **Site URL**.
+   - Add `https://lens-web.vercel.app/auth/callback` to **Redirect URLs**.
+3. **Inngest dashboard → Apps**: register the production app pointing at `https://lens-api.vercel.app/api/inngest`. Inngest will send a sync request to validate.
+
+### Why two projects, not one?
+
+Vercel's monorepo support works by treating each subfolder as an independent project with its own Root Directory. There's no good way to deploy `frontend/` (Next.js, edge-friendly) and `backend/` (Node.js serverless functions) as a single project because they have incompatible build pipelines. Two projects pointing at the same Git repo is the canonical pattern — both auto-deploy on every push to `main`.
 
 ---
 
