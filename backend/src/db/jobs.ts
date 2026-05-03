@@ -1,6 +1,7 @@
 import { supabaseAdmin, type ChatMessageRow, type DocumentRow, type JobRow, type JobStatus } from './supabase.js';
 
 type JobInsert = {
+  id?: string;
   user_id: string;
   zip_storage_path: string;
   zip_filename: string;

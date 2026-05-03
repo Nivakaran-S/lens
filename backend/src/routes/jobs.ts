@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
@@ -8,6 +9,7 @@ import { inngest } from '../inngest/client.js';
 import { withDeadline } from '../util/timeout.js';
 
 const SUPABASE_DEADLINE_MS = 8_000;
+const HANDLER_DEADLINE_MS = 20_000;
 
 const createJobSchema = z.object({
   filename: z.string().min(1).max(256),
@@ -23,66 +25,67 @@ jobsRoute.use('*', requireAuth);
 jobsRoute.post('/', async (c) => {
   const tStart = Date.now();
   const mark = (label: string) => console.log(`[POST /jobs] ${label} t+${Date.now() - tStart}ms`);
-  mark('handler entered');
 
-  const body = await c.req.json().catch(() => null);
-  mark('body parsed');
-  const parsed = createJobSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new HTTPException(400, { message: 'Invalid body' });
-  }
-  if (parsed.data.sizeBytes > MAX_ZIP_BYTES) {
-    throw new HTTPException(413, { message: 'ZIP too large' });
-  }
-  if (!parsed.data.filename.toLowerCase().endsWith('.zip')) {
-    throw new HTTPException(400, { message: 'Filename must end in .zip' });
-  }
+  // Outer deadline: even if every inner timeout fails to fire, the handler
+  // returns within 20s so we never hit Vercel's 60s function timeout.
+  const work = (async () => {
+    mark('handler entered');
 
-  const user = c.get('user');
+    const body = await c.req.json().catch(() => null);
+    mark('body parsed');
+    const parsed = createJobSchema.safeParse(body);
+    if (!parsed.success) throw new HTTPException(400, { message: 'Invalid body' });
+    if (parsed.data.sizeBytes > MAX_ZIP_BYTES) {
+      throw new HTTPException(413, { message: 'ZIP too large' });
+    }
+    if (!parsed.data.filename.toLowerCase().endsWith('.zip')) {
+      throw new HTTPException(400, { message: 'Filename must end in .zip' });
+    }
 
-  mark('insertJob start');
-  const job = await withDeadline(
-    insertJob({
-      user_id: user.id,
-      zip_filename: parsed.data.filename,
-      zip_size_bytes: parsed.data.sizeBytes,
-      zip_storage_path: 'pending',
-      status: 'queued',
-    }),
-    SUPABASE_DEADLINE_MS,
-    'insertJob',
-  );
-  mark('insertJob done');
+    const user = c.get('user');
 
-  const path = zipStoragePath(user.id, job.id, parsed.data.filename);
+    // Generate the job id up-front so we can compute the storage path before
+    // INSERT, collapsing the previous 3-call (insert→update→sign) flow into 2.
+    const jobId = randomUUID();
+    const path = zipStoragePath(user.id, jobId, parsed.data.filename);
 
-  mark('updateJob start');
-  await withDeadline(
-    updateJob(job.id, { zip_storage_path: path }),
-    SUPABASE_DEADLINE_MS,
-    'updateJob',
-  );
-  mark('updateJob done');
+    mark('insertJob start');
+    const job = await withDeadline(
+      insertJob({
+        id: jobId,
+        user_id: user.id,
+        zip_filename: parsed.data.filename,
+        zip_size_bytes: parsed.data.sizeBytes,
+        zip_storage_path: path,
+        status: 'queued',
+      }),
+      SUPABASE_DEADLINE_MS,
+      'insertJob',
+    );
+    mark('insertJob done');
 
-  mark('createSignedUploadUrl start');
-  const { data: signed, error: signErr } = await withDeadline(
-    supabaseAdmin().storage.from(STORAGE_BUCKET).createSignedUploadUrl(path),
-    SUPABASE_DEADLINE_MS,
-    'createSignedUploadUrl',
-  );
-  mark(`createSignedUploadUrl done, error=${!!signErr}`);
-  if (signErr || !signed) {
-    throw new HTTPException(500, { message: 'Failed to create upload URL', cause: signErr });
-  }
+    mark('createSignedUploadUrl start');
+    const { data: signed, error: signErr } = await withDeadline(
+      supabaseAdmin().storage.from(STORAGE_BUCKET).createSignedUploadUrl(path),
+      SUPABASE_DEADLINE_MS,
+      'createSignedUploadUrl',
+    );
+    mark(`createSignedUploadUrl done, error=${!!signErr}`);
+    if (signErr || !signed) {
+      throw new HTTPException(500, { message: 'Failed to create upload URL', cause: signErr });
+    }
 
-  mark('about to return JSON');
-  return c.json({
-    jobId: job.id,
-    storagePath: path,
-    uploadUrl: signed.signedUrl,
-    uploadToken: signed.token,
-    bucket: STORAGE_BUCKET,
-  });
+    mark('about to return JSON');
+    return c.json({
+      jobId: job.id,
+      storagePath: path,
+      uploadUrl: signed.signedUrl,
+      uploadToken: signed.token,
+      bucket: STORAGE_BUCKET,
+    });
+  })();
+
+  return await withDeadline(work, HANDLER_DEADLINE_MS, 'POST /api/jobs handler');
 });
 
 jobsRoute.post('/:id/start', async (c) => {

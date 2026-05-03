@@ -98,6 +98,12 @@ app.get('/api/diag/supabase', async (c) => {
       const { error } = await sb.storage.from('legal-packs').list('', { limit: 1 });
       if (error && !/not.found/i.test(error.message)) throw new Error(error.message);
     }),
+    await timed('storage_create_signed_upload_url', async () => {
+      // Same shape as POST /api/jobs: a path that doesn't yet exist in storage.
+      const probePath = `_diag/${Date.now()}-${Math.random().toString(36).slice(2)}.zip`;
+      const { error } = await sb.storage.from('legal-packs').createSignedUploadUrl(probePath);
+      if (error) throw new Error(error.message);
+    }),
   ];
 
   return c.json({
