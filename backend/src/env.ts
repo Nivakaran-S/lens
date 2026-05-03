@@ -4,6 +4,7 @@ const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   SUPABASE_JWT_AUD: z.string().default('authenticated'),
   GEMINI_API_KEY: z.string().min(1).optional(),
   INNGEST_EVENT_KEY: z.string().optional(),
@@ -34,6 +35,7 @@ export function env(): Env {
 
 const REQUIRED_KEYS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'] as const;
 const OPTIONAL_KEYS = [
+  'SUPABASE_JWT_SECRET',
   'GEMINI_API_KEY',
   'INNGEST_EVENT_KEY',
   'INNGEST_SIGNING_KEY',
