@@ -11,13 +11,60 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 });
 
-const parsed = schema.safeParse(process.env);
+type Env = z.infer<typeof schema>;
+let cached: Env | null = null;
 
-if (!parsed.success) {
-  console.error('Invalid environment configuration:', parsed.error.flatten().fieldErrors);
-  throw new Error('Invalid environment configuration');
+/**
+ * Strict env access — throws on first call if any required var is missing.
+ * Routes that need env should call this; /api/health and /api/diag must NOT.
+ */
+export function env(): Env {
+  if (cached) return cached;
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    const fields = parsed.error.flatten().fieldErrors;
+    const missing = Object.keys(fields).join(', ');
+    const msg = `Missing or invalid env vars: ${missing}`;
+    console.error('[env]', msg, fields);
+    throw new Error(msg);
+  }
+  cached = parsed.data;
+  return cached;
 }
 
-export const env = parsed.data;
+const REQUIRED_KEYS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'] as const;
+const OPTIONAL_KEYS = [
+  'GEMINI_API_KEY',
+  'INNGEST_EVENT_KEY',
+  'INNGEST_SIGNING_KEY',
+  'CORS_ORIGINS',
+  'SUPABASE_JWT_AUD',
+] as const;
 
-export const corsOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+/**
+ * Diagnostic: never throws, never reveals values. Useful from /api/diag to
+ * verify the deployed function is actually receiving the env vars the
+ * dashboard claims to have set.
+ */
+export function envStatus(): {
+  required: { name: string; present: boolean }[];
+  optional: { name: string; present: boolean }[];
+  allRequiredPresent: boolean;
+} {
+  const required = REQUIRED_KEYS.map((n) => ({ name: n, present: Boolean(process.env[n]) }));
+  const optional = OPTIONAL_KEYS.map((n) => ({ name: n, present: Boolean(process.env[n]) }));
+  return {
+    required,
+    optional,
+    allRequiredPresent: required.every((r) => r.present),
+  };
+}
+
+/** CORS origin allowlist. Reads process.env directly so it's safe before env() validates. */
+export function corsOrigins(): string[] {
+  const v = process.env.CORS_ORIGINS ?? 'http://localhost:3000';
+  return v
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

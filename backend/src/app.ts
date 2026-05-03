@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { logger } from 'hono/logger';
 import { serve as inngestServe } from 'inngest/hono';
-import { corsOrigins } from './env.js';
+import { corsOrigins, envStatus } from './env.js';
 import { inngest } from './inngest/client.js';
 import { analyzePack } from './inngest/analyze-pack.js';
 import { jobsRoute } from './routes/jobs.js';
@@ -15,7 +15,10 @@ app.use('*', logger());
 app.use(
   '*',
   cors({
-    origin: (origin) => (corsOrigins.includes(origin) ? origin : null),
+    origin: (origin) => {
+      const allow = corsOrigins();
+      return allow.includes(origin) ? origin : null;
+    },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type'],
     credentials: true,
@@ -24,6 +27,19 @@ app.use(
 );
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'lens-api', ts: new Date().toISOString() }));
+
+// Diagnostic endpoint: reports which env vars the running function actually
+// receives. NEVER reveals values, only presence — safe to expose. Use this to
+// verify a Vercel deploy picked up the dashboard env vars.
+app.get('/api/diag', (c) => {
+  const status = envStatus();
+  return c.json({
+    service: 'lens-api',
+    runtime: { node: process.version },
+    env: status,
+    ts: new Date().toISOString(),
+  });
+});
 
 const inngestHandler = inngestServe({ client: inngest, functions: [analyzePack] });
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c));

@@ -5,10 +5,11 @@ let cached: GoogleGenAI | null = null;
 
 export function gemini(): GoogleGenAI {
   if (cached) return cached;
-  if (!env.GEMINI_API_KEY) {
+  const apiKey = env().GEMINI_API_KEY;
+  if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not set');
   }
-  cached = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+  cached = new GoogleGenAI({ apiKey });
   return cached;
 }
 
