@@ -8,6 +8,7 @@ import { inngest } from './inngest/client.js';
 import { analyzePack } from './inngest/analyze-pack.js';
 import { jobsRoute } from './routes/jobs.js';
 import { chatRoute } from './routes/chat.js';
+import { TimeoutError } from './util/timeout.js';
 
 export const app = new Hono();
 
@@ -117,6 +118,10 @@ app.route('/api/jobs', chatRoute);
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return c.json({ error: err.message }, err.status);
+  }
+  if (err instanceof TimeoutError) {
+    console.error('[timeout]', err.message);
+    return c.json({ error: err.message }, 503);
   }
   console.error('[unhandled]', err);
   return c.json({ error: 'Internal Server Error' }, 500);

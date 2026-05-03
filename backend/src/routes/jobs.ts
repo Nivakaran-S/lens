@@ -5,6 +5,9 @@ import { requireAuth, type AuthEnv } from '../auth.js';
 import { STORAGE_BUCKET, supabaseAdmin, zipStoragePath } from '../db/supabase.js';
 import { getJob, insertJob, listDocumentsForJob, listJobsForUser, updateJob } from '../db/jobs.js';
 import { inngest } from '../inngest/client.js';
+import { withDeadline } from '../util/timeout.js';
+
+const SUPABASE_DEADLINE_MS = 8_000;
 
 const createJobSchema = z.object({
   filename: z.string().min(1).max(256),
@@ -38,25 +41,35 @@ jobsRoute.post('/', async (c) => {
   const user = c.get('user');
 
   mark('insertJob start');
-  const job = await insertJob({
-    user_id: user.id,
-    zip_filename: parsed.data.filename,
-    zip_size_bytes: parsed.data.sizeBytes,
-    zip_storage_path: 'pending',
-    status: 'queued',
-  });
+  const job = await withDeadline(
+    insertJob({
+      user_id: user.id,
+      zip_filename: parsed.data.filename,
+      zip_size_bytes: parsed.data.sizeBytes,
+      zip_storage_path: 'pending',
+      status: 'queued',
+    }),
+    SUPABASE_DEADLINE_MS,
+    'insertJob',
+  );
   mark('insertJob done');
 
   const path = zipStoragePath(user.id, job.id, parsed.data.filename);
 
   mark('updateJob start');
-  await updateJob(job.id, { zip_storage_path: path });
+  await withDeadline(
+    updateJob(job.id, { zip_storage_path: path }),
+    SUPABASE_DEADLINE_MS,
+    'updateJob',
+  );
   mark('updateJob done');
 
   mark('createSignedUploadUrl start');
-  const { data: signed, error: signErr } = await supabaseAdmin()
-    .storage.from(STORAGE_BUCKET)
-    .createSignedUploadUrl(path);
+  const { data: signed, error: signErr } = await withDeadline(
+    supabaseAdmin().storage.from(STORAGE_BUCKET).createSignedUploadUrl(path),
+    SUPABASE_DEADLINE_MS,
+    'createSignedUploadUrl',
+  );
   mark(`createSignedUploadUrl done, error=${!!signErr}`);
   if (signErr || !signed) {
     throw new HTTPException(500, { message: 'Failed to create upload URL', cause: signErr });
