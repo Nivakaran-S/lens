@@ -34,6 +34,9 @@ app.get('/api/diag', (c) => {
     service: 'lens-api',
     runtime: { node: process.version },
     env: status,
+    // SUPABASE_URL is not a secret — it's already in every browser bundle.
+    // Service-role / anon keys remain presence-only.
+    supabase_url: process.env.SUPABASE_URL ?? null,
     cors: {
       origins: corsOrigins(),
       requestOrigin: c.req.header('origin') ?? null,
