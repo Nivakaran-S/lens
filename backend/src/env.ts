@@ -69,9 +69,15 @@ export function corsOrigins(): string[] {
     .filter(Boolean);
 }
 
-/** Whether a given Origin header value is in the allowlist. Tolerant of trailing slashes. */
+/**
+ * Whether a given Origin header value is in the allowlist.
+ * Tolerant of trailing slashes. Set CORS_ORIGINS=* to allow ANY origin
+ * (useful for short-lived debugging only — disables CORS protection).
+ */
 export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return false;
+  const allow = corsOrigins();
+  if (allow.includes('*')) return true;
   const normalised = origin.replace(/\/+$/, '');
-  return corsOrigins().includes(normalised);
+  return allow.includes(normalised);
 }
