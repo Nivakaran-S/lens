@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { logger } from 'hono/logger';
 import { serve as inngestServe } from 'inngest/hono';
-import { corsOrigins, envStatus } from './env.js';
+import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
 import { inngest } from './inngest/client.js';
 import { analyzePack } from './inngest/analyze-pack.js';
 import { jobsRoute } from './routes/jobs.js';
@@ -15,10 +15,7 @@ app.use('*', logger());
 app.use(
   '*',
   cors({
-    origin: (origin) => {
-      const allow = corsOrigins();
-      return allow.includes(origin) ? origin : null;
-    },
+    origin: (origin) => (isOriginAllowed(origin) ? origin : null),
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type'],
     credentials: true,
@@ -37,6 +34,11 @@ app.get('/api/diag', (c) => {
     service: 'lens-api',
     runtime: { node: process.version },
     env: status,
+    cors: {
+      origins: corsOrigins(),
+      requestOrigin: c.req.header('origin') ?? null,
+      requestOriginAllowed: isOriginAllowed(c.req.header('origin')),
+    },
     ts: new Date().toISOString(),
   });
 });

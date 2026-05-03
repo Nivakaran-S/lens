@@ -65,6 +65,13 @@ export function corsOrigins(): string[] {
   const v = process.env.CORS_ORIGINS ?? 'http://localhost:3000';
   return v
     .split(',')
-    .map((s) => s.trim())
+    .map((s) => s.trim().replace(/\/+$/, '')) // strip trailing slashes
     .filter(Boolean);
+}
+
+/** Whether a given Origin header value is in the allowlist. Tolerant of trailing slashes. */
+export function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return false;
+  const normalised = origin.replace(/\/+$/, '');
+  return corsOrigins().includes(normalised);
 }
