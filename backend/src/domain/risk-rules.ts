@@ -1,4 +1,4 @@
-import type { DocumentRow } from '../db/supabase.js';
+import type { DocumentRow } from '../db/jobs.js';
 import type { DocType } from './doc-types.js';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';

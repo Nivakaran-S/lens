@@ -26,18 +26,11 @@ app.use(
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'lens-api', ts: new Date().toISOString() }));
 
-// Diagnostic endpoint: reports which env vars the running function actually
-// receives. NEVER reveals values, only presence — safe to expose. Use this to
-// verify a Vercel deploy picked up the dashboard env vars.
 app.get('/api/diag', (c) => {
-  const status = envStatus();
   return c.json({
     service: 'lens-api',
     runtime: { node: process.version },
-    env: status,
-    // SUPABASE_URL is not a secret — it's already in every browser bundle.
-    // Service-role / anon keys remain presence-only.
-    supabase_url: process.env.SUPABASE_URL ?? null,
+    env: envStatus(),
     cors: {
       origins: corsOrigins(),
       requestOrigin: c.req.header('origin') ?? null,
@@ -47,14 +40,10 @@ app.get('/api/diag', (c) => {
   });
 });
 
-/**
- * Probes connectivity from this function out to Supabase. Times each call
- * individually so we can see which leg (DNS, auth API, REST API, Storage API)
- * is the bottleneck. Public — does not reveal data, only timing/error shapes.
- */
-app.get('/api/diag/supabase', async (c) => {
-  // Lazy import so /api/health and /api/diag still work if env() throws.
-  const { supabaseAdmin } = await import('./db/supabase.js');
+/** Probe upstream services with per-call timing — Mongo + R2. */
+app.get('/api/diag/services', async (c) => {
+  const { mongo } = await import('./db/mongo.js');
+  const { presignUpload, objectExists } = await import('./storage/r2.js');
 
   async function timed<T>(label: string, fn: () => Promise<T>) {
     const t0 = Date.now();
@@ -71,45 +60,26 @@ app.get('/api/diag/supabase', async (c) => {
     }
   }
 
-  let sb;
-  try {
-    sb = supabaseAdmin();
-  } catch (err) {
-    return c.json(
-      {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        hint: 'supabaseAdmin() failed — likely missing SUPABASE_URL / SERVICE_ROLE_KEY',
-      },
-      500,
-    );
-  }
-
   const results = [
-    await timed('rest_jobs_count', async () => {
-      const { error } = await sb.from('jobs').select('id', { count: 'exact', head: true });
-      if (error) throw new Error(error.message);
+    await timed('mongo_ping', async () => {
+      const db = await mongo();
+      await db.command({ ping: 1 });
     }),
-    await timed('auth_get_user_invalid', async () => {
-      // Expect this to FAIL (invalid token) — we just want to know how fast.
-      await sb.auth.getUser('invalid.token.value');
+    await timed('mongo_jobs_count', async () => {
+      const db = await mongo();
+      await db.collection('jobs').countDocuments({}, { limit: 1 });
     }),
-    await timed('storage_list_root', async () => {
-      const { error } = await sb.storage.from('legal-packs').list('', { limit: 1 });
-      if (error && !/not.found/i.test(error.message)) throw new Error(error.message);
+    await timed('r2_presign_upload', async () => {
+      await presignUpload(`_diag/${Date.now()}.zip`, 'application/zip');
     }),
-    await timed('storage_create_signed_upload_url', async () => {
-      // Same shape as POST /api/jobs: a path that doesn't yet exist in storage.
-      const probePath = `_diag/${Date.now()}-${Math.random().toString(36).slice(2)}.zip`;
-      const { error } = await sb.storage.from('legal-packs').createSignedUploadUrl(probePath);
-      if (error) throw new Error(error.message);
+    await timed('r2_object_exists_probe', async () => {
+      // Returns false (probe key doesn't exist) — we just measure the round trip.
+      await objectExists(`_diag/does-not-exist-${Date.now()}.zip`);
     }),
   ];
 
   return c.json({
     service: 'lens-api',
-    supabase_url: process.env.SUPABASE_URL ?? null,
-    fetch_timeout_ms: 15_000,
     results,
     ts: new Date().toISOString(),
   });

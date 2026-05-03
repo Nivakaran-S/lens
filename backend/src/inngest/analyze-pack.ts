@@ -8,7 +8,7 @@ import {
   updateDocument,
   updateJob,
 } from '../db/jobs.js';
-import { STORAGE_BUCKET, docStoragePath, supabaseAdmin } from '../db/supabase.js';
+import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/r2.js';
 import { extractPdfsFromZip } from '../zip/extract.js';
 import { ensureFreshGeminiFile, uploadPdfToGemini } from '../gemini/file-store.js';
 import { classifyDocument } from '../gemini/classify.js';
@@ -44,20 +44,14 @@ export const analyzePack = inngest.createFunction(
   async ({ event, step, logger }) => {
     const { jobId } = event.data;
 
-    // ── Step 1: extract PDFs from the ZIP and stage in Storage + Gemini ──
+    // ── Step 1: extract PDFs from the ZIP and stage in R2 + Gemini ──
     const documents = await step.run('extract', async () => {
       const job = await getJob(jobId);
       if (!job) throw new NonRetriableError(`Job ${jobId} not found`);
 
       await updateJob(jobId, { status: 'extracting', status_detail: 'Extracting PDFs from ZIP' });
 
-      const sb = supabaseAdmin();
-      const { data: zipBlob, error: dlErr } = await sb.storage
-        .from(STORAGE_BUCKET)
-        .download(job.zip_storage_path);
-      if (dlErr || !zipBlob) throw new NonRetriableError(`ZIP download failed: ${dlErr?.message ?? 'no data'}`);
-
-      const zipBuffer = Buffer.from(await zipBlob.arrayBuffer());
+      const zipBuffer = await getObjectBuffer(job.zip_storage_key);
       const pdfs = extractPdfsFromZip(zipBuffer);
       if (pdfs.length === 0) {
         throw new NonRetriableError('ZIP contained no PDFs');
@@ -66,19 +60,16 @@ export const analyzePack = inngest.createFunction(
       const inserted: { id: string; filename: string }[] = [];
       for (let i = 0; i < pdfs.length; i++) {
         const pdf = pdfs[i]!;
-        const path = docStoragePath(job.user_id, job.id, i, pdf.filename);
+        const key = pdfObjectKey(job.user_id, job.id, i, pdf.filename);
 
-        const { error: upErr } = await sb.storage
-          .from(STORAGE_BUCKET)
-          .upload(path, pdf.buffer, { contentType: 'application/pdf', upsert: true });
-        if (upErr) throw new Error(`Storage upload failed for ${pdf.filename}: ${upErr.message}`);
+        await putObject(key, pdf.buffer, 'application/pdf');
 
         const ref = await uploadPdfToGemini(pdf.buffer, pdf.filename);
 
         const row = await insertDocument({
           job_id: job.id,
           filename: pdf.filename,
-          storage_path: path,
+          storage_key: key,
           size_bytes: pdf.buffer.length,
         });
         await updateDocument(row.id, {

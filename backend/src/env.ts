@@ -1,24 +1,36 @@
 import { z } from 'zod';
 
 const schema = z.object({
+  // Supabase Auth (JWT-only, no SDK calls from backend)
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   SUPABASE_JWT_AUD: z.string().default('authenticated'),
+
+  // MongoDB
+  MONGODB_URL: z.string().min(1),
+  MONGODB_DB_NAME: z.string().default('lens'),
+
+  // Cloudflare R2 (S3-compatible)
+  R2_ACCOUNT_ID: z.string().min(1),
+  R2_ACCESS_KEY_ID: z.string().min(1),
+  R2_SECRET_ACCESS_KEY: z.string().min(1),
+  R2_BUCKET: z.string().default('lens-packs'),
+
+  // Gemini
   GEMINI_API_KEY: z.string().min(1).optional(),
+
+  // Inngest
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
+
+  // CORS
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 });
 
 type Env = z.infer<typeof schema>;
 let cached: Env | null = null;
 
-/**
- * Strict env access — throws on first call if any required var is missing.
- * Routes that need env should call this; /api/health and /api/diag must NOT.
- */
 export function env(): Env {
   if (cached) return cached;
   const parsed = schema.safeParse(process.env);
@@ -33,26 +45,26 @@ export function env(): Env {
   return cached;
 }
 
-const REQUIRED_KEYS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'] as const;
+const REQUIRED_KEYS = [
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
+  'MONGODB_URL',
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+] as const;
 const OPTIONAL_KEYS = [
   'SUPABASE_JWT_SECRET',
+  'SUPABASE_JWT_AUD',
+  'MONGODB_DB_NAME',
+  'R2_BUCKET',
   'GEMINI_API_KEY',
   'INNGEST_EVENT_KEY',
   'INNGEST_SIGNING_KEY',
   'CORS_ORIGINS',
-  'SUPABASE_JWT_AUD',
 ] as const;
 
-/**
- * Diagnostic: never throws, never reveals values. Useful from /api/diag to
- * verify the deployed function is actually receiving the env vars the
- * dashboard claims to have set.
- */
-export function envStatus(): {
-  required: { name: string; present: boolean }[];
-  optional: { name: string; present: boolean }[];
-  allRequiredPresent: boolean;
-} {
+export function envStatus() {
   const required = REQUIRED_KEYS.map((n) => ({ name: n, present: Boolean(process.env[n]) }));
   const optional = OPTIONAL_KEYS.map((n) => ({ name: n, present: Boolean(process.env[n]) }));
   return {
@@ -62,20 +74,14 @@ export function envStatus(): {
   };
 }
 
-/** CORS origin allowlist. Reads process.env directly so it's safe before env() validates. */
 export function corsOrigins(): string[] {
   const v = process.env.CORS_ORIGINS ?? 'http://localhost:3000';
   return v
     .split(',')
-    .map((s) => s.trim().replace(/\/+$/, '')) // strip trailing slashes
+    .map((s) => s.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 }
 
-/**
- * Whether a given Origin header value is in the allowlist.
- * Tolerant of trailing slashes. Set CORS_ORIGINS=* to allow ANY origin
- * (useful for short-lived debugging only — disables CORS protection).
- */
 export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return false;
   const allow = corsOrigins();

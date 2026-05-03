@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { getSupabaseBrowser } from '../../../lib/supabase/client';
 
 const MAX_BYTES = 100 * 1024 * 1024;
 
@@ -37,14 +36,16 @@ export default function UploadPage() {
         const created = await api.createJob(file.name, file.size);
 
         setStage('uploading');
-        const supabase = getSupabaseBrowser();
-        const { error: upErr } = await supabase.storage
-          .from(created.bucket)
-          .uploadToSignedUrl(created.storagePath, created.uploadToken, file, {
-            contentType: 'application/zip',
-            upsert: false,
-          });
-        if (upErr) throw upErr;
+        // PUT directly to the R2 presigned URL — no SDK, no auth header (the
+        // URL itself encodes the signature).
+        const putRes = await fetch(created.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/zip' },
+          body: file,
+        });
+        if (!putRes.ok) {
+          throw new Error(`Upload failed (${putRes.status} ${putRes.statusText})`);
+        }
         setProgress(100);
 
         setStage('starting');

@@ -1,5 +1,7 @@
 import { FILE_REFRESH_AGE_MS, gemini } from './client.js';
-import { STORAGE_BUCKET, supabaseAdmin, type DocumentRow } from '../db/supabase.js';
+import { updateDocument } from '../db/jobs.js';
+import { getObjectBuffer } from '../storage/r2.js';
+import type { DocumentRow } from '../db/jobs.js';
 
 export type GeminiFileRef = { uri: string; mimeType: string };
 
@@ -18,8 +20,8 @@ export async function uploadPdfToGemini(buffer: Buffer, displayName: string): Pr
 }
 
 /**
- * Returns a usable Gemini file URI for a document, re-uploading from Supabase
- * Storage if the existing URI is missing or older than {@link FILE_REFRESH_AGE_MS}.
+ * Returns a usable Gemini file URI for a document, re-uploading from R2 if the
+ * existing URI is missing or older than {@link FILE_REFRESH_AGE_MS}.
  */
 export async function ensureFreshGeminiFile(doc: DocumentRow): Promise<GeminiFileRef> {
   const existingUri = doc.gemini_file_uri;
@@ -30,20 +32,13 @@ export async function ensureFreshGeminiFile(doc: DocumentRow): Promise<GeminiFil
     return { uri: existingUri, mimeType: 'application/pdf' };
   }
 
-  const sb = supabaseAdmin();
-  const { data, error } = await sb.storage.from(STORAGE_BUCKET).download(doc.storage_path);
-  if (error || !data) throw error ?? new Error(`Storage download failed for ${doc.storage_path}`);
-  const buffer = Buffer.from(await data.arrayBuffer());
-
+  const buffer = await getObjectBuffer(doc.storage_key);
   const ref = await uploadPdfToGemini(buffer, doc.filename);
 
-  await sb
-    .from('documents')
-    .update({
-      gemini_file_uri: ref.uri,
-      gemini_file_uploaded_at: new Date().toISOString(),
-    })
-    .eq('id', doc.id);
+  await updateDocument(doc.id, {
+    gemini_file_uri: ref.uri,
+    gemini_file_uploaded_at: new Date().toISOString(),
+  });
 
   return ref;
 }

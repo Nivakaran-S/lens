@@ -3,13 +3,21 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { requireAuth, type AuthEnv } from '../auth.js';
-import { STORAGE_BUCKET, supabaseAdmin, zipStoragePath } from '../db/supabase.js';
-import { getJob, insertJob, listDocumentsForJob, listJobsForUser, updateJob } from '../db/jobs.js';
+import {
+  getJob,
+  insertJob,
+  listDocumentsForJob,
+  listJobsForUser,
+  updateJob,
+} from '../db/jobs.js';
 import { inngest } from '../inngest/client.js';
+import {
+  objectExists,
+  presignDownload,
+  presignUpload,
+  zipObjectKey,
+} from '../storage/r2.js';
 import { withDeadline } from '../util/timeout.js';
-
-const SUPABASE_DEADLINE_MS = 8_000;
-const HANDLER_DEADLINE_MS = 20_000;
 
 const createJobSchema = z.object({
   filename: z.string().min(1).max(256),
@@ -17,6 +25,8 @@ const createJobSchema = z.object({
 });
 
 const MAX_ZIP_BYTES = 100 * 1024 * 1024;
+const DB_DEADLINE_MS = 8_000;
+const HANDLER_DEADLINE_MS = 20_000;
 
 export const jobsRoute = new Hono<AuthEnv>();
 
@@ -24,10 +34,9 @@ jobsRoute.use('*', requireAuth);
 
 jobsRoute.post('/', async (c) => {
   const tStart = Date.now();
-  const mark = (label: string) => console.log(`[POST /jobs] ${label} t+${Date.now() - tStart}ms`);
+  const mark = (label: string) =>
+    console.log(`[POST /jobs] ${label} t+${Date.now() - tStart}ms`);
 
-  // Outer deadline: even if every inner timeout fails to fire, the handler
-  // returns within 20s so we never hit Vercel's 60s function timeout.
   const work = (async () => {
     mark('handler entered');
 
@@ -43,11 +52,8 @@ jobsRoute.post('/', async (c) => {
     }
 
     const user = c.get('user');
-
-    // Generate the job id up-front so we can compute the storage path before
-    // INSERT, collapsing the previous 3-call (insert→update→sign) flow into 2.
     const jobId = randomUUID();
-    const path = zipStoragePath(user.id, jobId, parsed.data.filename);
+    const key = zipObjectKey(user.id, jobId, parsed.data.filename);
 
     mark('insertJob start');
     const job = await withDeadline(
@@ -56,32 +62,26 @@ jobsRoute.post('/', async (c) => {
         user_id: user.id,
         zip_filename: parsed.data.filename,
         zip_size_bytes: parsed.data.sizeBytes,
-        zip_storage_path: path,
+        zip_storage_key: key,
         status: 'queued',
       }),
-      SUPABASE_DEADLINE_MS,
-      'insertJob',
+      DB_DEADLINE_MS,
+      'mongo insertJob',
     );
     mark('insertJob done');
 
-    mark('createSignedUploadUrl start');
-    const { data: signed, error: signErr } = await withDeadline(
-      supabaseAdmin().storage.from(STORAGE_BUCKET).createSignedUploadUrl(path),
-      SUPABASE_DEADLINE_MS,
-      'createSignedUploadUrl',
+    mark('presignUpload start');
+    const uploadUrl = await withDeadline(
+      presignUpload(key, 'application/zip'),
+      DB_DEADLINE_MS,
+      'r2 presignUpload',
     );
-    mark(`createSignedUploadUrl done, error=${!!signErr}`);
-    if (signErr || !signed) {
-      throw new HTTPException(500, { message: 'Failed to create upload URL', cause: signErr });
-    }
+    mark('presignUpload done');
 
-    mark('about to return JSON');
     return c.json({
       jobId: job.id,
-      storagePath: path,
-      uploadUrl: signed.signedUrl,
-      uploadToken: signed.token,
-      bucket: STORAGE_BUCKET,
+      storageKey: key,
+      uploadUrl,
     });
   })();
 
@@ -99,16 +99,12 @@ jobsRoute.post('/:id/start', async (c) => {
     return c.json({ jobId: job.id, status: job.status, alreadyStarted: true });
   }
 
-  const folder = job.zip_storage_path.split('/').slice(0, -1).join('/');
-  const expected = job.zip_storage_path.split('/').pop();
-  const { data: list } = await supabaseAdmin().storage.from(STORAGE_BUCKET).list(folder);
-  const exists = list?.some((f) => f.name === expected);
+  const exists = await objectExists(job.zip_storage_key);
   if (!exists) {
     throw new HTTPException(400, { message: 'Upload not found in storage' });
   }
 
   await updateJob(job.id, { status: 'uploaded', status_detail: 'Queued for analysis' });
-
   await inngest.send({ name: 'pack/uploaded', data: { jobId: job.id } });
 
   return c.json({ jobId: job.id, status: 'uploaded' });
@@ -165,24 +161,10 @@ jobsRoute.get('/:id/documents/:docId/url', async (c) => {
   if (!job) throw new HTTPException(404, { message: 'Job not found' });
   if (job.user_id !== user.id) throw new HTTPException(403, { message: 'Forbidden' });
 
-  const sb = supabaseAdmin();
-  const { data: doc, error } = await sb
-    .from('documents')
-    .select('storage_path, job_id')
-    .eq('id', docId)
-    .maybeSingle();
-  if (error) throw new HTTPException(500, { message: error.message });
-  if (!doc || (doc as { job_id: string }).job_id !== id) {
-    throw new HTTPException(404, { message: 'Document not found' });
-  }
+  const documents = await listDocumentsForJob(id);
+  const doc = documents.find((d) => d.id === docId);
+  if (!doc) throw new HTTPException(404, { message: 'Document not found' });
 
-  const { data: signed, error: signErr } = await sb.storage
-    .from(STORAGE_BUCKET)
-    .createSignedUrl((doc as { storage_path: string }).storage_path, 60 * 10);
-
-  if (signErr || !signed) {
-    throw new HTTPException(500, { message: 'Failed to sign URL', cause: signErr });
-  }
-
-  return c.json({ url: signed.signedUrl, expiresInSeconds: 600 });
+  const url = await presignDownload(doc.storage_key);
+  return c.json({ url, expiresInSeconds: 60 * 15 });
 });

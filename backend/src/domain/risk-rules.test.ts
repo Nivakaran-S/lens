@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyRiskRules, type Report } from './risk-rules.js';
-import type { DocumentRow } from '../db/supabase.js';
+import type { DocumentRow } from '../db/jobs.js';
 
 function emptyReport(): Report {
   return {
@@ -18,7 +18,7 @@ function doc(overrides: Partial<DocumentRow> & { doc_type: string; extraction: u
     id: `doc-${Math.random()}`,
     job_id: 'job-1',
     filename: `${overrides.doc_type}.pdf`,
-    storage_path: `path/${overrides.doc_type}.pdf`,
+    storage_key: `path/${overrides.doc_type}.pdf`,
     size_bytes: 1000,
     gemini_file_uri: null,
     gemini_file_uploaded_at: null,

@@ -1,9 +1,23 @@
-import { supabaseAdmin, type ChatMessageRow, type DocumentRow, type JobRow, type JobStatus } from './supabase.js';
+import { randomUUID } from 'node:crypto';
+import {
+  chatMessagesCollection,
+  documentsCollection,
+  ensureIndexes,
+  jobsCollection,
+  type ChatMessageDoc,
+  type DocumentDoc,
+  type JobDoc,
+  type JobStatus,
+} from './mongo.js';
+
+export type { ChatMessageDoc as ChatMessageRow, DocumentDoc as DocumentRow, JobDoc as JobRow, JobStatus };
+
+const now = () => new Date().toISOString();
 
 type JobInsert = {
   id?: string;
   user_id: string;
-  zip_storage_path: string;
+  zip_storage_key: string;
   zip_filename: string;
   zip_size_bytes?: number | null;
   property_label?: string | null;
@@ -11,7 +25,7 @@ type JobInsert = {
 };
 
 type JobUpdate = Partial<{
-  zip_storage_path: string;
+  zip_storage_key: string;
   property_label: string | null;
   status: JobStatus;
   status_detail: string | null;
@@ -19,65 +33,98 @@ type JobUpdate = Partial<{
   error: string | null;
 }>;
 
-export async function insertJob(values: JobInsert): Promise<JobRow> {
-  const { data, error } = await supabaseAdmin().from('jobs').insert(values).select().single();
-  if (error || !data) throw error ?? new Error('Insert failed');
-  return data as JobRow;
+function stripId<T extends object>(doc: T | null): T | null {
+  if (!doc) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const copy = { ...(doc as any) };
+  delete copy._id;
+  return copy as T;
+}
+
+export async function insertJob(values: JobInsert): Promise<JobDoc> {
+  const jobs = await jobsCollection();
+  await ensureIndexes();
+  const id = values.id ?? randomUUID();
+  const ts = now();
+  const doc: JobDoc = {
+    id,
+    user_id: values.user_id,
+    zip_storage_key: values.zip_storage_key,
+    zip_filename: values.zip_filename,
+    zip_size_bytes: values.zip_size_bytes ?? null,
+    property_label: values.property_label ?? null,
+    status: values.status ?? 'queued',
+    status_detail: null,
+    report: null,
+    error: null,
+    created_at: ts,
+    updated_at: ts,
+  };
+  await jobs.insertOne(doc);
+  return doc;
 }
 
 export async function updateJob(id: string, values: JobUpdate): Promise<void> {
-  const { error } = await supabaseAdmin().from('jobs').update(values).eq('id', id);
-  if (error) throw error;
+  const jobs = await jobsCollection();
+  const $set: Record<string, unknown> = { ...values, updated_at: now() };
+  await jobs.updateOne({ id }, { $set });
 }
 
-export async function getJob(id: string): Promise<JobRow | null> {
-  const { data, error } = await supabaseAdmin().from('jobs').select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
-  return (data as JobRow | null) ?? null;
+export async function getJob(id: string): Promise<JobDoc | null> {
+  const jobs = await jobsCollection();
+  const doc = await jobs.findOne({ id });
+  return stripId(doc) as JobDoc | null;
 }
 
-export async function listJobsForUser(userId: string, limit = 50): Promise<JobRow[]> {
-  const { data, error } = await supabaseAdmin()
-    .from('jobs')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
+export async function listJobsForUser(userId: string, limit = 50): Promise<JobDoc[]> {
+  const jobs = await jobsCollection();
+  const cursor = jobs
+    .find({ user_id: userId })
+    .sort({ created_at: -1 })
     .limit(limit);
-  if (error) throw error;
-  return (data ?? []) as JobRow[];
+  const out: JobDoc[] = [];
+  for await (const doc of cursor) {
+    out.push(stripId(doc) as JobDoc);
+  }
+  return out;
 }
 
-export async function listDocumentsForJob(jobId: string): Promise<DocumentRow[]> {
-  const { data, error } = await supabaseAdmin()
-    .from('documents')
-    .select('*')
-    .eq('job_id', jobId)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as DocumentRow[];
+export async function listDocumentsForJob(jobId: string): Promise<DocumentDoc[]> {
+  const docs = await documentsCollection();
+  const cursor = docs.find({ job_id: jobId }).sort({ created_at: 1 });
+  const out: DocumentDoc[] = [];
+  for await (const d of cursor) out.push(stripId(d) as DocumentDoc);
+  return out;
 }
 
-export async function listChatMessages(jobId: string): Promise<ChatMessageRow[]> {
-  const { data, error } = await supabaseAdmin()
-    .from('chat_messages')
-    .select('*')
-    .eq('job_id', jobId)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as ChatMessageRow[];
+export async function listChatMessages(jobId: string): Promise<ChatMessageDoc[]> {
+  const chats = await chatMessagesCollection();
+  const cursor = chats.find({ job_id: jobId }).sort({ created_at: 1 });
+  const out: ChatMessageDoc[] = [];
+  for await (const m of cursor) out.push(stripId(m) as ChatMessageDoc);
+  return out;
 }
 
-export async function insertChatMessage(jobId: string, role: 'user' | 'assistant', content: string): Promise<void> {
-  const { error } = await supabaseAdmin()
-    .from('chat_messages')
-    .insert({ job_id: jobId, role, content });
-  if (error) throw error;
+export async function insertChatMessage(
+  jobId: string,
+  role: 'user' | 'assistant',
+  content: string,
+): Promise<void> {
+  const chats = await chatMessagesCollection();
+  await chats.insertOne({
+    id: randomUUID(),
+    job_id: jobId,
+    role,
+    content,
+    created_at: now(),
+  });
 }
 
 type DocumentInsert = {
+  id?: string;
   job_id: string;
   filename: string;
-  storage_path: string;
+  storage_key: string;
   size_bytes?: number | null;
 };
 
@@ -88,19 +135,33 @@ type DocumentUpdate = Partial<{
   extraction: unknown;
 }>;
 
-export async function insertDocument(values: DocumentInsert): Promise<DocumentRow> {
-  const { data, error } = await supabaseAdmin().from('documents').insert(values).select().single();
-  if (error || !data) throw error ?? new Error('Document insert failed');
-  return data as DocumentRow;
+export async function insertDocument(values: DocumentInsert): Promise<DocumentDoc> {
+  const docs = await documentsCollection();
+  await ensureIndexes();
+  const id = values.id ?? randomUUID();
+  const doc: DocumentDoc = {
+    id,
+    job_id: values.job_id,
+    filename: values.filename,
+    storage_key: values.storage_key,
+    size_bytes: values.size_bytes ?? null,
+    gemini_file_uri: null,
+    gemini_file_uploaded_at: null,
+    doc_type: null,
+    extraction: null,
+    created_at: now(),
+  };
+  await docs.insertOne(doc);
+  return doc;
 }
 
 export async function updateDocument(id: string, values: DocumentUpdate): Promise<void> {
-  const { error } = await supabaseAdmin().from('documents').update(values).eq('id', id);
-  if (error) throw error;
+  const docs = await documentsCollection();
+  await docs.updateOne({ id }, { $set: { ...values } });
 }
 
-export async function getDocument(id: string): Promise<DocumentRow | null> {
-  const { data, error } = await supabaseAdmin().from('documents').select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
-  return (data as DocumentRow | null) ?? null;
+export async function getDocument(id: string): Promise<DocumentDoc | null> {
+  const docs = await documentsCollection();
+  const doc = await docs.findOne({ id });
+  return stripId(doc) as DocumentDoc | null;
 }

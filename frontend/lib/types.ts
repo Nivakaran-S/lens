@@ -75,10 +75,8 @@ export type SynthesisReport = {
 
 export type CreateJobResponse = {
   jobId: string;
-  storagePath: string;
+  storageKey: string;
   uploadUrl: string;
-  uploadToken: string;
-  bucket: string;
 };
 
 export type ChatMessage = {
