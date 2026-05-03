@@ -1,18 +1,18 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
-import { logger } from 'hono/logger';
 import { serve as inngestServe } from 'inngest/hono';
 import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
 import { inngest } from './inngest/client.js';
 import { analyzePack } from './inngest/analyze-pack.js';
 import { jobsRoute } from './routes/jobs.js';
 import { chatRoute } from './routes/chat.js';
+import { requestLogger } from './util/log.js';
 import { TimeoutError } from './util/timeout.js';
 
 export const app = new Hono();
 
-app.use('*', logger());
+app.use('*', requestLogger);
 app.use(
   '*',
   cors({
@@ -43,13 +43,15 @@ app.get('/api/diag', (c) => {
 /** Probe upstream services with per-call timing — Mongo + R2. */
 app.get('/api/diag/services', async (c) => {
   const { mongo } = await import('./db/mongo.js');
-  const { presignUpload, objectExists } = await import('./storage/r2.js');
+  const { presignUpload } = await import('./storage/r2.js');
+  const { GetObjectCommand, HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
+  const { env } = await import('./env.js');
 
   async function timed<T>(label: string, fn: () => Promise<T>) {
     const t0 = Date.now();
     try {
-      await fn();
-      return { label, ok: true, ms: Date.now() - t0 };
+      const value = await fn();
+      return { label, ok: true, ms: Date.now() - t0, ...(value !== undefined ? { value } : {}) };
     } catch (err) {
       return {
         label,
@@ -59,6 +61,16 @@ app.get('/api/diag/services', async (c) => {
       };
     }
   }
+
+  const e = env();
+  const r2 = new S3Client({
+    region: 'auto',
+    endpoint: `https://${e.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: e.R2_ACCESS_KEY_ID,
+      secretAccessKey: e.R2_SECRET_ACCESS_KEY,
+    },
+  });
 
   const results = [
     await timed('mongo_ping', async () => {
@@ -72,14 +84,36 @@ app.get('/api/diag/services', async (c) => {
     await timed('r2_presign_upload', async () => {
       await presignUpload(`_diag/${Date.now()}.zip`, 'application/zip');
     }),
-    await timed('r2_object_exists_probe', async () => {
-      // Returns false (probe key doesn't exist) — we just measure the round trip.
-      await objectExists(`_diag/does-not-exist-${Date.now()}.zip`);
+    // This one ACTUALLY exercises the credentials by talking to R2.
+    // Wrong key → 'InvalidAccessKeyId' or 'SignatureDoesNotMatch'.
+    // Wrong bucket → 'NoSuchBucket'.
+    // Right key + wrong region → 'Forbidden'.
+    await timed('r2_head_bucket', async () => {
+      await r2.send(new HeadBucketCommand({ Bucket: e.R2_BUCKET }));
+    }),
+    // Probe a known-missing object — expect NoSuchKey on success path.
+    await timed('r2_get_missing_object', async () => {
+      try {
+        await r2.send(
+          new GetObjectCommand({
+            Bucket: e.R2_BUCKET,
+            Key: `_diag/does-not-exist-${Date.now()}.zip`,
+          }),
+        );
+      } catch (err) {
+        // NoSuchKey here is the expected, healthy response.
+        const name = err instanceof Error ? err.name : '';
+        if (name === 'NoSuchKey') return; // success — credentials worked, key just doesn't exist
+        throw err;
+      }
     }),
   ];
 
   return c.json({
     service: 'lens-api',
+    bucket: e.R2_BUCKET,
+    accessKeyIdPrefix: e.R2_ACCESS_KEY_ID.slice(0, 6) + '…',
+    accessKeyIdLength: e.R2_ACCESS_KEY_ID.length,
     results,
     ts: new Date().toISOString(),
   });

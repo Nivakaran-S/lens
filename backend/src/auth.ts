@@ -7,28 +7,19 @@ import {
   type JWTVerifyGetKey,
 } from 'jose';
 import { env } from './env.js';
+import { logger as fallbackLogger, type Logger } from './util/log.js';
 
 export type AuthUser = { id: string; email?: string };
 
-type Env = { Variables: { user: AuthUser } };
-
-/**
- * Verify a Supabase access token locally — no network round-trip per request.
- *
- * Supabase signs user JWTs with one of:
- *   - HS256 (legacy): symmetric, uses the project's JWT Secret.
- *   - ES256 / RS256 / EdDSA: asymmetric, public keys exposed via the project's
- *     JWKS endpoint at /auth/v1/.well-known/jwks.json.
- *
- * We detect the algorithm from the token's header and pick the right path.
- * jose caches the JWKS internally after the first fetch, so steady-state
- * verification is ~1ms with no I/O.
- */
+type Env = { Variables: { user: AuthUser; log?: Logger } };
 
 let cachedJwks: JWTVerifyGetKey | null = null;
-function getJwks(): JWTVerifyGetKey {
+let jwksWarmed = false;
+
+function getJwks(log: Logger): JWTVerifyGetKey {
   if (cachedJwks) return cachedJwks;
   const url = new URL('/auth/v1/.well-known/jwks.json', env().SUPABASE_URL);
+  log.info(`jwks: creating remote set`, { url: url.toString() });
   cachedJwks = createRemoteJWKSet(url);
   return cachedJwks;
 }
@@ -45,9 +36,13 @@ function getSecret(): Uint8Array | null {
 const ASYMMETRIC_ALGS = ['ES256', 'RS256', 'EdDSA', 'ES384', 'RS384', 'ES512', 'RS512'] as const;
 
 export const requireAuth = createMiddleware<Env>(async (c, next) => {
+  const log = (c.get('log') as Logger | undefined) ?? fallbackLogger('auth');
+  const t0 = Date.now();
+
   const header = c.req.header('Authorization');
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) {
+    log.warn('auth: missing bearer token');
     throw new HTTPException(401, { message: 'Missing bearer token' });
   }
 
@@ -55,8 +50,10 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
   try {
     alg = decodeProtectedHeader(token).alg ?? '';
   } catch {
+    log.warn('auth: malformed token header');
     throw new HTTPException(401, { message: 'Malformed token header' });
   }
+  log.info(`auth: token alg=${alg}`);
 
   try {
     const audience = env().SUPABASE_JWT_AUD;
@@ -65,17 +62,25 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
     if (alg === 'HS256') {
       const secret = getSecret();
       if (!secret) {
+        log.error('auth: token uses HS256 but SUPABASE_JWT_SECRET is not set');
         throw new HTTPException(500, {
           message: 'Token uses HS256 but SUPABASE_JWT_SECRET is not set',
         });
       }
       ({ payload } = await jwtVerify(token, secret, { algorithms: ['HS256'], audience }));
     } else if ((ASYMMETRIC_ALGS as readonly string[]).includes(alg)) {
-      ({ payload } = await jwtVerify(token, getJwks(), {
+      const jwks = getJwks(log);
+      const wasWarm = jwksWarmed;
+      ({ payload } = await jwtVerify(token, jwks, {
         algorithms: [...ASYMMETRIC_ALGS],
         audience,
       }));
+      if (!wasWarm) {
+        jwksWarmed = true;
+        log.info(`auth: jwks first verify in ${Date.now() - t0}ms (includes JWKS fetch)`);
+      }
     } else {
+      log.warn(`auth: unsupported alg ${alg}`);
       throw new HTTPException(401, { message: `Unsupported JWT algorithm: ${alg}` });
     }
 
@@ -83,9 +88,12 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
     if (!sub) throw new Error('JWT missing sub claim');
     const email = typeof payload.email === 'string' ? payload.email : undefined;
     c.set('user', { id: sub, email });
+    log.info(`auth: ok in ${Date.now() - t0}ms`, { sub: sub.slice(0, 8) });
   } catch (err) {
     if (err instanceof HTTPException) throw err;
-    console.error('[auth] JWT verify failed', err);
+    log.error(`auth: verify failed after ${Date.now() - t0}ms`, {
+      error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    });
     throw new HTTPException(401, { message: 'Invalid token', cause: err });
   }
 

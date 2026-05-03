@@ -17,6 +17,7 @@ import {
   presignUpload,
   zipObjectKey,
 } from '../storage/r2.js';
+import { logger as fallbackLogger, type Logger } from '../util/log.js';
 import { withDeadline } from '../util/timeout.js';
 
 const createJobSchema = z.object({
@@ -33,17 +34,23 @@ export const jobsRoute = new Hono<AuthEnv>();
 jobsRoute.use('*', requireAuth);
 
 jobsRoute.post('/', async (c) => {
+  const log = (c.get('log') as Logger | undefined) ?? fallbackLogger('POST /jobs');
   const tStart = Date.now();
-  const mark = (label: string) =>
-    console.log(`[POST /jobs] ${label} t+${Date.now() - tStart}ms`);
+  const mark = (label: string) => log.info(`mark: ${label} t+${Date.now() - tStart}ms`);
 
   const work = (async () => {
     mark('handler entered');
 
-    const body = await c.req.json().catch(() => null);
+    const body = await c.req.json().catch((e) => {
+      log.warn(`body parse failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    });
     mark('body parsed');
     const parsed = createJobSchema.safeParse(body);
-    if (!parsed.success) throw new HTTPException(400, { message: 'Invalid body' });
+    if (!parsed.success) {
+      log.warn('body validation failed', { issues: parsed.error.flatten() });
+      throw new HTTPException(400, { message: 'Invalid body' });
+    }
     if (parsed.data.sizeBytes > MAX_ZIP_BYTES) {
       throw new HTTPException(413, { message: 'ZIP too large' });
     }
@@ -54,6 +61,12 @@ jobsRoute.post('/', async (c) => {
     const user = c.get('user');
     const jobId = randomUUID();
     const key = zipObjectKey(user.id, jobId, parsed.data.filename);
+    log.info('plan', {
+      jobId: jobId.slice(0, 8),
+      userId: user.id.slice(0, 8),
+      filename: parsed.data.filename,
+      sizeBytes: parsed.data.sizeBytes,
+    });
 
     mark('insertJob start');
     const job = await withDeadline(
@@ -67,6 +80,7 @@ jobsRoute.post('/', async (c) => {
       }),
       DB_DEADLINE_MS,
       'mongo insertJob',
+      log,
     );
     mark('insertJob done');
 
@@ -75,6 +89,7 @@ jobsRoute.post('/', async (c) => {
       presignUpload(key, 'application/zip'),
       DB_DEADLINE_MS,
       'r2 presignUpload',
+      log,
     );
     mark('presignUpload done');
 
@@ -85,7 +100,7 @@ jobsRoute.post('/', async (c) => {
     });
   })();
 
-  return await withDeadline(work, HANDLER_DEADLINE_MS, 'POST /api/jobs handler');
+  return await withDeadline(work, HANDLER_DEADLINE_MS, 'POST /api/jobs handler', log);
 });
 
 jobsRoute.post('/:id/start', async (c) => {
