@@ -1,20 +1,24 @@
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
-import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
-import { env } from './env.js';
+import { supabaseAdmin } from './db/supabase.js';
 
 export type AuthUser = { id: string; email?: string };
 
 type Env = { Variables: { user: AuthUser } };
 
-let cachedJwks: JWTVerifyGetKey | null = null;
-function jwks(): JWTVerifyGetKey {
-  if (cachedJwks) return cachedJwks;
-  const e = env();
-  cachedJwks = createRemoteJWKSet(new URL(`${e.SUPABASE_URL}/auth/v1/keys`));
-  return cachedJwks;
-}
-
+/**
+ * Validate a Supabase access token by handing it to the Supabase SDK.
+ *
+ * We previously used jose + the JWKS endpoint, but that path is brittle:
+ *   - Old projects sign with HS256 using a project-wide secret (no JWKS).
+ *   - New projects sign with ES256/RS256 via a JWKS endpoint whose path
+ *     has changed across Supabase versions.
+ *   - The endpoint /auth/v1/keys is not stable for all projects.
+ *
+ * supabase.auth.getUser(token) handles both schemes, also rejects tokens
+ * for banned/deleted users, and adds ~50ms per request — acceptable for
+ * the low QPS this API sees.
+ */
 export const requireAuth = createMiddleware<Env>(async (c, next) => {
   const header = c.req.header('Authorization');
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
@@ -23,13 +27,14 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
   }
 
   try {
-    const { payload } = await jwtVerify(token, jwks(), {
-      audience: env().SUPABASE_JWT_AUD,
-    });
-    const sub = payload.sub;
-    if (!sub) throw new Error('Token missing sub');
-    c.set('user', { id: sub, email: typeof payload.email === 'string' ? payload.email : undefined });
+    const { data, error } = await supabaseAdmin().auth.getUser(token);
+    if (error || !data?.user) {
+      throw new HTTPException(401, { message: 'Invalid token', cause: error ?? undefined });
+    }
+    c.set('user', { id: data.user.id, email: data.user.email });
   } catch (err) {
+    if (err instanceof HTTPException) throw err;
+    console.error('[auth] supabase.auth.getUser failed', err);
     throw new HTTPException(401, { message: 'Invalid token', cause: err });
   }
 
