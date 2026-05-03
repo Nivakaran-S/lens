@@ -46,6 +46,68 @@ app.get('/api/diag', (c) => {
   });
 });
 
+/**
+ * Probes connectivity from this function out to Supabase. Times each call
+ * individually so we can see which leg (DNS, auth API, REST API, Storage API)
+ * is the bottleneck. Public — does not reveal data, only timing/error shapes.
+ */
+app.get('/api/diag/supabase', async (c) => {
+  // Lazy import so /api/health and /api/diag still work if env() throws.
+  const { supabaseAdmin } = await import('./db/supabase.js');
+
+  async function timed<T>(label: string, fn: () => Promise<T>) {
+    const t0 = Date.now();
+    try {
+      await fn();
+      return { label, ok: true, ms: Date.now() - t0 };
+    } catch (err) {
+      return {
+        label,
+        ok: false,
+        ms: Date.now() - t0,
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      };
+    }
+  }
+
+  let sb;
+  try {
+    sb = supabaseAdmin();
+  } catch (err) {
+    return c.json(
+      {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        hint: 'supabaseAdmin() failed — likely missing SUPABASE_URL / SERVICE_ROLE_KEY',
+      },
+      500,
+    );
+  }
+
+  const results = [
+    await timed('rest_jobs_count', async () => {
+      const { error } = await sb.from('jobs').select('id', { count: 'exact', head: true });
+      if (error) throw new Error(error.message);
+    }),
+    await timed('auth_get_user_invalid', async () => {
+      // Expect this to FAIL (invalid token) — we just want to know how fast.
+      await sb.auth.getUser('invalid.token.value');
+    }),
+    await timed('storage_list_root', async () => {
+      const { error } = await sb.storage.from('legal-packs').list('', { limit: 1 });
+      if (error && !/not.found/i.test(error.message)) throw new Error(error.message);
+    }),
+  ];
+
+  return c.json({
+    service: 'lens-api',
+    supabase_url: process.env.SUPABASE_URL ?? null,
+    fetch_timeout_ms: 15_000,
+    results,
+    ts: new Date().toISOString(),
+  });
+});
+
 const inngestHandler = inngestServe({ client: inngest, functions: [analyzePack] });
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c));
 
