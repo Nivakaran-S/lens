@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: lens-api
+    runtime: node
+    plan: free  # bump to "starter" ($7/mo) to eliminate cold starts
+    region: frankfurt  # closest to UK; pick "ohio" or "oregon" for US
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      # Secrets — set these in the Render dashboard, not here.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_JWT_AUD
+        value: authenticated
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: lens
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: lens-packs
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: INNGEST_EVENT_KEY
+        sync: false
+      - key: INNGEST_SIGNING_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
