@@ -112,6 +112,7 @@ Rules:
 - For UK addresses, normalise spacing in postcodes (e.g. "NG19 6HN").
 - For dates, prefer ISO 8601 (YYYY-MM-DD); if only a year is shown, output "YYYY".
 - For monetary values, output the number in GBP (e.g. 1500, not "£1,500").
+- ANY number found in any document — whether written as digits ("28 days", "£1,500", "5%") or in word form ("twenty-eight days", "one thousand five hundred pounds", "five per cent") — MUST appear in the relevant headline_findings or risks[].explanation when it materially affects the buyer (e.g. completion period, fees, percentages, distances, dates, areas, ages, EPC scores, deposit amounts, premium amounts). Convert word-form numbers to digit form in the output. Never round or summarise numeric values; preserve them exactly as stated in the source.
 - Severity guidance: critical = blocks completion or causes major financial harm; high = materially affects bid or post-completion plans; medium = should know about, may need a quote; low = noted for completeness; info = neutral fact.
 - Always populate buyer_questions_for_solicitor with 5–10 specific, actionable questions.
 - Set overall_risk to the highest severity present in risks[].
