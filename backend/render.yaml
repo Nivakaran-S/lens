@@ -32,9 +32,5 @@ services:
         value: lens-packs
       - key: GEMINI_API_KEY
         sync: false
-      - key: INNGEST_EVENT_KEY
-        sync: false
-      - key: INNGEST_SIGNING_KEY
-        sync: false
       - key: CORS_ORIGINS
         sync: false

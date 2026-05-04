@@ -20,10 +20,6 @@ const schema = z.object({
   // Gemini
   GEMINI_API_KEY: z.string().min(1).optional(),
 
-  // Inngest
-  INNGEST_EVENT_KEY: z.string().optional(),
-  INNGEST_SIGNING_KEY: z.string().optional(),
-
   // CORS
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 });
@@ -59,8 +55,6 @@ const OPTIONAL_KEYS = [
   'MONGODB_DB_NAME',
   'R2_BUCKET',
   'GEMINI_API_KEY',
-  'INNGEST_EVENT_KEY',
-  'INNGEST_SIGNING_KEY',
   'CORS_ORIGINS',
 ] as const;
 

@@ -10,7 +10,6 @@ import {
   listJobsForUser,
   updateJob,
 } from '../db/jobs.js';
-import { inngest } from '../inngest/client.js';
 import {
   objectExists,
   presignDownload,
@@ -19,6 +18,7 @@ import {
 } from '../storage/r2.js';
 import { logger as fallbackLogger, type Logger } from '../util/log.js';
 import { withDeadline } from '../util/timeout.js';
+import { runAnalysis } from '../worker/analyse.js';
 
 const createJobSchema = z.object({
   filename: z.string().min(1).max(256),
@@ -122,18 +122,15 @@ jobsRoute.post('/:id/start', async (c) => {
 
   await updateJob(job.id, { status: 'uploaded', status_detail: 'Queued for analysis' });
 
-  // Fire-and-forget the Inngest event. If delivery fails (no INNGEST_EVENT_KEY,
-  // dev server down, network blip), we DON'T fail the user's upload — the job
-  // is already in mongo as 'uploaded', and the user can re-trigger the worker
-  // later. This avoids a missing/misconfigured Inngest from blocking uploads.
-  inngest
-    .send({ name: 'pack/uploaded', data: { jobId: job.id } })
-    .then(() => log.info('inngest: pack/uploaded delivered'))
-    .catch((err) => {
-      log.error(`inngest: send failed (workflow won't fire until fixed)`, {
-        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-      });
+  // Fire-and-forget the analysis pipeline. The handler returns immediately;
+  // runAnalysis updates job.status as it works. Frontend polls GET /jobs/:id.
+  // runAnalysis catches its own errors and persists them to the job row, so
+  // this .catch is only a backstop for diagnostic logging.
+  runAnalysis(job.id, log.child(job.id.slice(0, 8))).catch((err) => {
+    log.error('runAnalysis unexpected throw', {
+      error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
     });
+  });
 
   return c.json({ jobId: job.id, status: 'uploaded' });
 });

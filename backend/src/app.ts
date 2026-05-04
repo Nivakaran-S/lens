@@ -1,10 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
-import { serve as inngestServe } from 'inngest/hono';
 import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
-import { inngest } from './inngest/client.js';
-import { analyzePack } from './inngest/analyze-pack.js';
 import { jobsRoute } from './routes/jobs.js';
 import { requestLogger } from './util/log.js';
 import { TimeoutError } from './util/timeout.js';
@@ -117,9 +114,6 @@ app.get('/api/diag/services', async (c) => {
     ts: new Date().toISOString(),
   });
 });
-
-const inngestHandler = inngestServe({ client: inngest, functions: [analyzePack] });
-app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c));
 
 app.route('/api/jobs', jobsRoute);
 
