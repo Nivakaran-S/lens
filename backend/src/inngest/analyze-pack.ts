@@ -1,7 +1,6 @@
 import { NonRetriableError } from 'inngest';
 import { inngest } from './client.js';
 import {
-  getDocument,
   getJob,
   insertDocument,
   listDocumentsForJob,
@@ -11,25 +10,17 @@ import {
 import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/r2.js';
 import { extractPdfsFromZip } from '../zip/extract.js';
 import { ensureFreshGeminiFile } from '../gemini/file-store.js';
-import { classifyDocument } from '../gemini/classify.js';
-import { extractDocument } from '../gemini/extract.js';
-import { synthesiseReport, type DocumentForSynthesis } from '../gemini/synthesize.js';
-import { applyRiskRules, type Report } from '../domain/risk-rules.js';
+import { analyseAll, type DocInput } from '../gemini/analyseAll.js';
+import { applyRiskRules } from '../domain/risk-rules.js';
 import type { DocType } from '../domain/doc-types.js';
 
 export const analyzePack = inngest.createFunction(
   {
     id: 'analyze-pack',
     name: 'Analyse legal pack',
-    // Free-tier-safe defaults: only one workflow at a time so the
-    // process-local Gemini throttle in throttle.ts isn't shared across
-    // concurrent runs. retries=5 gives RetryAfterError room when a 429
-    // slips past the in-process throttle.
     concurrency: { limit: 1 },
-    retries: 5,
+    retries: 2,
     onFailure: async ({ event, error }) => {
-      // Inngest passes the original event under event.data.event when a
-      // function fails after exhausting retries.
       const originalJobId = (event as unknown as { data: { event: { data: { jobId: string } } } })
         .data.event.data.jobId;
       const message = error instanceof Error ? error.message : String(error);
@@ -48,7 +39,7 @@ export const analyzePack = inngest.createFunction(
   async ({ event, step, logger }) => {
     const { jobId } = event.data;
 
-    // ── Step 1: extract PDFs from the ZIP and stage in R2 + Gemini ──
+    // ── Step 1: extract PDFs from the ZIP and stage in R2 ──────────────
     const documents = await step.run('extract', async () => {
       const job = await getJob(jobId);
       if (!job) throw new NonRetriableError(`Job ${jobId} not found`);
@@ -61,23 +52,17 @@ export const analyzePack = inngest.createFunction(
         throw new NonRetriableError('ZIP contained no PDFs');
       }
 
-      // Pure ZIP → R2 + insert. NO Gemini calls in this step — those happen
-      // per-doc later so the user sees each doc's classification/extraction
-      // results pop in incrementally as Gemini works through them.
       const inserted: { id: string; filename: string }[] = [];
       for (let i = 0; i < pdfs.length; i++) {
         const pdf = pdfs[i]!;
         const key = pdfObjectKey(job.user_id, job.id, i, pdf.filename);
-
         await putObject(key, pdf.buffer, 'application/pdf');
-
         const row = await insertDocument({
           job_id: job.id,
           filename: pdf.filename,
           storage_key: key,
           size_bytes: pdf.buffer.length,
         });
-
         inserted.push({ id: row.id, filename: pdf.filename });
       }
 
@@ -85,80 +70,68 @@ export const analyzePack = inngest.createFunction(
       return inserted;
     });
 
-    // ── Step 2: per-doc analysis pipeline (interleaved) ───────────────────
-    // For each document, do classify → extract one after the other before
-    // moving to the next doc. The frontend polls jobs/:id every 2s and sees
-    // each doc's `doc_type` then `extraction` populate one at a time, so
-    // the UI shows progress incrementally instead of in two big batches.
+    // ── Step 2: upload each PDF to Gemini File API ─────────────────────
+    // File API uploads are on a separate quota from generate_content, so we
+    // can run these in parallel without rate-limit risk. Doing this in its
+    // own step makes the per-doc upload progress visible if the workflow
+    // restarts after a crash.
+    await step.run('uploading-status', async () => {
+      await updateJob(jobId, {
+        status: 'extracting',
+        status_detail: `Uploading ${documents.length} PDFs to Gemini`,
+      });
+    });
+
+    await step.run('upload-to-gemini', async () => {
+      const docs = await listDocumentsForJob(jobId);
+      // ensureFreshGeminiFile uploads if missing AND updates the doc row
+      // with the URI + timestamp. Run in parallel — file API has a higher
+      // quota than generate_content.
+      await Promise.all(docs.map((d) => ensureFreshGeminiFile(d)));
+    });
+
+    // ── Step 3: single Gemini 2.5 Pro call analysing all documents ────
+    // One generate_content call instead of 25. Returns per-doc
+    // classification + extraction AND the cross-doc synthesis report.
+    // See gemini/analyseAll.ts for the system prompt.
     await step.run('analyzing-status', async () => {
       await updateJob(jobId, {
         status: 'analyzing',
-        status_detail: `Analyzing 0/${documents.length}`,
+        status_detail: `Analysing ${documents.length} documents in one Gemini Pro call`,
       });
     });
 
-    for (let i = 0; i < documents.length; i++) {
-      const d = documents[i]!;
-      const human = `${i + 1}/${documents.length}: ${d.filename}`;
-
-      await step.run(`progress-classify-${i}`, async () => {
-        await updateJob(jobId, {
-          status: 'classifying',
-          status_detail: `Classifying ${human}`,
-        });
-      });
-
-      await step.run(`classify-${i}-${d.id}`, async () => {
-        const doc = await getDocument(d.id);
-        if (!doc) throw new NonRetriableError(`Doc ${d.id} disappeared`);
-        const file = await ensureFreshGeminiFile(doc);
-        const result = await classifyDocument(file, doc.filename);
-        await updateDocument(doc.id, { doc_type: result.doc_type });
-        return { id: doc.id, doc_type: result.doc_type };
-      });
-
-      await step.run(`progress-extract-${i}`, async () => {
-        await updateJob(jobId, {
-          status: 'analyzing',
-          status_detail: `Extracting ${human}`,
-        });
-      });
-
-      await step.run(`extract-${i}-${d.id}`, async () => {
-        const doc = await getDocument(d.id);
-        if (!doc) throw new NonRetriableError(`Doc ${d.id} disappeared`);
-        if (!doc.doc_type) throw new NonRetriableError(`Doc ${d.id} missing doc_type after classify`);
-        const file = await ensureFreshGeminiFile(doc);
-        const extraction = await extractDocument(doc.doc_type as DocType, file, doc.filename);
-        await updateDocument(doc.id, { extraction });
-        return { id: doc.id };
-      });
-    }
-
-    // ── Step 4: cross-document synthesis (Gemini 2.5 Pro) ─────────────────
-    await step.run('synthesizing-status', async () => {
-      await updateJob(jobId, {
-        status: 'synthesizing',
-        status_detail: 'Cross-referencing findings across the pack',
-      });
-    });
-
-    const finalReport = await step.run('synthesize', async () => {
+    const finalReport = await step.run('analyse-all', async () => {
       const docs = await listDocumentsForJob(jobId);
-      const forSynthesis: DocumentForSynthesis[] = [];
+      const inputs: DocInput[] = [];
       for (const d of docs) {
-        if (!d.doc_type) continue;
-        const file = await ensureFreshGeminiFile(d);
-        forSynthesis.push({
-          filename: d.filename,
-          doc_type: d.doc_type as DocType,
-          extraction: d.extraction,
-          file,
+        const file = await ensureFreshGeminiFile(d); // cached after step 2
+        inputs.push({ id: d.id, filename: d.filename, file });
+      }
+
+      const result = await analyseAll(inputs);
+
+      // Write per-doc classification + extraction back to MongoDB so the
+      // frontend's DocumentList renders them.
+      for (const docResult of result.documents) {
+        const matching = docs.find((d) => d.filename === docResult.filename);
+        if (!matching) {
+          logger.warn(`analyseAll returned a document not in the pack`, {
+            filename: docResult.filename,
+          });
+          continue;
+        }
+        await updateDocument(matching.id, {
+          doc_type: docResult.doc_type as DocType,
+          extraction: docResult.extraction,
         });
       }
 
-      const modelReport: Report = await synthesiseReport(forSynthesis);
-      const finalised = applyRiskRules(modelReport, docs);
+      // Apply the deterministic UK-specific rule layer on top of the
+      // model's report (severity bumps for non-absolute title, MEES
+      // F/G EPC, probate executor mismatch, etc.).
+      const docsForRules = await listDocumentsForJob(jobId);
+      const finalised = applyRiskRules(result.report, docsForRules);
 
       await updateJob(jobId, {
         status: 'done',
@@ -168,7 +141,7 @@ export const analyzePack = inngest.createFunction(
       return finalised;
     });
 
-    logger.info(`Synthesis complete for job ${jobId}: overall_risk=${finalReport.overall_risk}`);
+    logger.info(`Analysis complete for job ${jobId}: overall_risk=${finalReport.overall_risk}`);
     return { jobId, documents: documents.length, overall_risk: finalReport.overall_risk };
   },
 );
