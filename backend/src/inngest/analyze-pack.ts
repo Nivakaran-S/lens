@@ -10,7 +10,7 @@ import {
 } from '../db/jobs.js';
 import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/r2.js';
 import { extractPdfsFromZip } from '../zip/extract.js';
-import { ensureFreshGeminiFile, uploadPdfToGemini } from '../gemini/file-store.js';
+import { ensureFreshGeminiFile } from '../gemini/file-store.js';
 import { classifyDocument } from '../gemini/classify.js';
 import { extractDocument } from '../gemini/extract.js';
 import { synthesiseReport, type DocumentForSynthesis } from '../gemini/synthesize.js';
@@ -21,8 +21,12 @@ export const analyzePack = inngest.createFunction(
   {
     id: 'analyze-pack',
     name: 'Analyse legal pack',
-    concurrency: { limit: 4 },
-    retries: 2,
+    // Free-tier-safe defaults: only one workflow at a time so the
+    // process-local Gemini throttle in throttle.ts isn't shared across
+    // concurrent runs. retries=5 gives RetryAfterError room when a 429
+    // slips past the in-process throttle.
+    concurrency: { limit: 1 },
+    retries: 5,
     onFailure: async ({ event, error }) => {
       // Inngest passes the original event under event.data.event when a
       // function fails after exhausting retries.
@@ -57,6 +61,9 @@ export const analyzePack = inngest.createFunction(
         throw new NonRetriableError('ZIP contained no PDFs');
       }
 
+      // Pure ZIP → R2 + insert. NO Gemini calls in this step — those happen
+      // per-doc later so the user sees each doc's classification/extraction
+      // results pop in incrementally as Gemini works through them.
       const inserted: { id: string; filename: string }[] = [];
       for (let i = 0; i < pdfs.length; i++) {
         const pdf = pdfs[i]!;
@@ -64,17 +71,11 @@ export const analyzePack = inngest.createFunction(
 
         await putObject(key, pdf.buffer, 'application/pdf');
 
-        const ref = await uploadPdfToGemini(pdf.buffer, pdf.filename);
-
         const row = await insertDocument({
           job_id: job.id,
           filename: pdf.filename,
           storage_key: key,
           size_bytes: pdf.buffer.length,
-        });
-        await updateDocument(row.id, {
-          gemini_file_uri: ref.uri,
-          gemini_file_uploaded_at: new Date().toISOString(),
         });
 
         inserted.push({ id: row.id, filename: pdf.filename });
@@ -84,50 +85,55 @@ export const analyzePack = inngest.createFunction(
       return inserted;
     });
 
-    // ── Step 2: classify each document (in parallel) ──────────────────────
-    await step.run('classify-status', async () => {
-      await updateJob(jobId, {
-        status: 'classifying',
-        status_detail: `Classifying ${documents.length} document${documents.length === 1 ? '' : 's'}`,
-      });
-    });
-
-    await Promise.all(
-      documents.map((d, i) =>
-        step.run(`classify-${i}-${d.id}`, async () => {
-          const doc = await getDocument(d.id);
-          if (!doc) throw new NonRetriableError(`Doc ${d.id} disappeared`);
-          const file = await ensureFreshGeminiFile(doc);
-          const result = await classifyDocument(file, doc.filename);
-          await updateDocument(doc.id, { doc_type: result.doc_type });
-          return { id: doc.id, doc_type: result.doc_type };
-        }),
-      ),
-    );
-
-    // ── Step 3: per-document structured extraction (in parallel) ──────────
+    // ── Step 2: per-doc analysis pipeline (interleaved) ───────────────────
+    // For each document, do classify → extract one after the other before
+    // moving to the next doc. The frontend polls jobs/:id every 2s and sees
+    // each doc's `doc_type` then `extraction` populate one at a time, so
+    // the UI shows progress incrementally instead of in two big batches.
     await step.run('analyzing-status', async () => {
       await updateJob(jobId, {
         status: 'analyzing',
-        status_detail: `Analyzing ${documents.length} document${documents.length === 1 ? '' : 's'}`,
+        status_detail: `Analyzing 0/${documents.length}`,
       });
     });
 
-    const docsForExtract = await step.run('reload-docs', async () => listDocumentsForJob(jobId));
+    for (let i = 0; i < documents.length; i++) {
+      const d = documents[i]!;
+      const human = `${i + 1}/${documents.length}: ${d.filename}`;
 
-    await Promise.all(
-      docsForExtract.map((d, i) =>
-        step.run(`extract-${i}-${d.id}`, async () => {
-          if (!d.doc_type) {
-            throw new NonRetriableError(`Doc ${d.id} missing doc_type after classify`);
-          }
-          const file = await ensureFreshGeminiFile(d);
-          const extraction = await extractDocument(d.doc_type as DocType, file, d.filename);
-          await updateDocument(d.id, { extraction });
-          return { id: d.id };
-        }),
-      ),
-    );
+      await step.run(`progress-classify-${i}`, async () => {
+        await updateJob(jobId, {
+          status: 'classifying',
+          status_detail: `Classifying ${human}`,
+        });
+      });
+
+      await step.run(`classify-${i}-${d.id}`, async () => {
+        const doc = await getDocument(d.id);
+        if (!doc) throw new NonRetriableError(`Doc ${d.id} disappeared`);
+        const file = await ensureFreshGeminiFile(doc);
+        const result = await classifyDocument(file, doc.filename);
+        await updateDocument(doc.id, { doc_type: result.doc_type });
+        return { id: doc.id, doc_type: result.doc_type };
+      });
+
+      await step.run(`progress-extract-${i}`, async () => {
+        await updateJob(jobId, {
+          status: 'analyzing',
+          status_detail: `Extracting ${human}`,
+        });
+      });
+
+      await step.run(`extract-${i}-${d.id}`, async () => {
+        const doc = await getDocument(d.id);
+        if (!doc) throw new NonRetriableError(`Doc ${d.id} disappeared`);
+        if (!doc.doc_type) throw new NonRetriableError(`Doc ${d.id} missing doc_type after classify`);
+        const file = await ensureFreshGeminiFile(doc);
+        const extraction = await extractDocument(doc.doc_type as DocType, file, doc.filename);
+        await updateDocument(doc.id, { extraction });
+        return { id: doc.id };
+      });
+    }
 
     // ── Step 4: cross-document synthesis (Gemini 2.5 Pro) ─────────────────
     await step.run('synthesizing-status', async () => {

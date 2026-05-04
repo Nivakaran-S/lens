@@ -104,6 +104,7 @@ jobsRoute.post('/', async (c) => {
 });
 
 jobsRoute.post('/:id/start', async (c) => {
+  const log = (c.get('log') as Logger | undefined) ?? fallbackLogger('POST /jobs/:id/start');
   const user = c.get('user');
   const id = c.req.param('id');
 
@@ -120,7 +121,19 @@ jobsRoute.post('/:id/start', async (c) => {
   }
 
   await updateJob(job.id, { status: 'uploaded', status_detail: 'Queued for analysis' });
-  await inngest.send({ name: 'pack/uploaded', data: { jobId: job.id } });
+
+  // Fire-and-forget the Inngest event. If delivery fails (no INNGEST_EVENT_KEY,
+  // dev server down, network blip), we DON'T fail the user's upload — the job
+  // is already in mongo as 'uploaded', and the user can re-trigger the worker
+  // later. This avoids a missing/misconfigured Inngest from blocking uploads.
+  inngest
+    .send({ name: 'pack/uploaded', data: { jobId: job.id } })
+    .then(() => log.info('inngest: pack/uploaded delivered'))
+    .catch((err) => {
+      log.error(`inngest: send failed (workflow won't fire until fixed)`, {
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      });
+    });
 
   return c.json({ jobId: job.id, status: 'uploaded' });
 });

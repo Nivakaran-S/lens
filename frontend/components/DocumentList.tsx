@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { ChevronDown, ExternalLink } from 'lucide-react';
+import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
 import type { JobDocument } from '../lib/types';
 
@@ -65,8 +65,24 @@ function DocumentRow({ jobId, doc }: { jobId: string; doc: JobDocument }) {
           />
           <span className="min-w-0 flex-1 truncate text-sm">{doc.filename}</span>
         </button>
-        <span className="whitespace-nowrap text-xs text-zinc-500">
-          {doc.doc_type ? (DOC_TYPE_LABEL[doc.doc_type] ?? doc.doc_type) : 'Pending…'}
+        <span className="flex items-center gap-1.5 whitespace-nowrap text-xs">
+          {doc.doc_type ? (
+            <span
+              className={
+                hasExtraction
+                  ? 'text-zinc-700 dark:text-zinc-300'
+                  : 'flex items-center gap-1 text-amber-700 dark:text-amber-300'
+              }
+            >
+              {!hasExtraction && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
+              {DOC_TYPE_LABEL[doc.doc_type] ?? doc.doc_type}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-zinc-500">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              Classifying…
+            </span>
+          )}
         </span>
         <button
           onClick={viewPdf}

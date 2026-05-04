@@ -4,6 +4,7 @@ import { synthesisSchema } from './schemas.js';
 import { DOC_TYPE_LABELS, type DocType } from '../domain/doc-types.js';
 import type { GeminiFileRef } from './file-store.js';
 import type { Report } from '../domain/risk-rules.js';
+import { withFreeTierThrottle } from './throttle.js';
 
 const SYSTEM_INSTRUCTION = `You are an expert UK conveyancing analyst summarising a property auction legal pack for a non-lawyer buyer.
 
@@ -30,38 +31,40 @@ export type DocumentForSynthesis = {
 };
 
 export async function synthesiseReport(documents: DocumentForSynthesis[]): Promise<Report> {
-  const ai = gemini();
+  return withFreeTierThrottle(`synthesize (${documents.length} docs)`, async () => {
+    const ai = gemini();
 
-  const summaryBlock = documents
-    .map(
-      (d) =>
-        `## ${d.filename} (${DOC_TYPE_LABELS[d.doc_type]})\n${JSON.stringify(d.extraction ?? {}, null, 2)}`,
-    )
-    .join('\n\n');
+    const summaryBlock = documents
+      .map(
+        (d) =>
+          `## ${d.filename} (${DOC_TYPE_LABELS[d.doc_type]})\n${JSON.stringify(d.extraction ?? {}, null, 2)}`,
+      )
+      .join('\n\n');
 
-  const parts: Part[] = [
-    {
-      text: `Pack contents (${documents.length} documents):\n\n${summaryBlock}\n\nProduce the synthesis JSON now.`,
-    },
-  ];
+    const parts: Part[] = [
+      {
+        text: `Pack contents (${documents.length} documents):\n\n${summaryBlock}\n\nProduce the synthesis JSON now.`,
+      },
+    ];
 
-  // Attach the file refs as evidence so the model can re-read them when extractions are thin.
-  for (const d of documents) {
-    if (d.file?.uri) parts.push(createPartFromUri(d.file.uri, d.file.mimeType));
-  }
+    // Attach the file refs as evidence so the model can re-read them when extractions are thin.
+    for (const d of documents) {
+      if (d.file?.uri) parts.push(createPartFromUri(d.file.uri, d.file.mimeType));
+    }
 
-  const response = await ai.models.generateContent({
-    model: MODELS.synthesize,
-    contents: [{ role: 'user', parts }],
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      responseMimeType: 'application/json',
-      responseSchema: synthesisSchema,
-      temperature: 0,
-    },
+    const response = await ai.models.generateContent({
+      model: MODELS.synthesize,
+      contents: [{ role: 'user', parts }],
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        responseMimeType: 'application/json',
+        responseSchema: synthesisSchema,
+        temperature: 0,
+      },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error('Empty synthesis response');
+    return JSON.parse(text) as Report;
   });
-
-  const text = response.text;
-  if (!text) throw new Error('Empty synthesis response');
-  return JSON.parse(text) as Report;
 }

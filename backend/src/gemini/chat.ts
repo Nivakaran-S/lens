@@ -2,6 +2,7 @@ import { createPartFromUri, type Content } from '@google/genai';
 import { gemini, MODELS } from './client.js';
 import type { GeminiFileRef } from './file-store.js';
 import type { Report } from '../domain/risk-rules.js';
+import { withFreeTierThrottle } from './throttle.js';
 
 const SYSTEM_INSTRUCTION = `You are a UK conveyancing assistant answering follow-up questions about a single auction legal pack.
 
@@ -29,45 +30,47 @@ export async function answerChat(
   userMessage: string,
   context: ChatContext,
 ): Promise<string> {
-  const ai = gemini();
+  return withFreeTierThrottle('chat', async () => {
+    const ai = gemini();
 
-  const reportBlurb = context.report
-    ? `Synthesis report (already produced for this pack):\n\n${JSON.stringify(context.report, null, 2)}\n\n`
-    : '';
-  const fileList = context.files.length
-    ? `Documents in this pack:\n${context.files.map((f, i) => `  ${i + 1}. ${f.filename}`).join('\n')}\n\n`
-    : '';
+    const reportBlurb = context.report
+      ? `Synthesis report (already produced for this pack):\n\n${JSON.stringify(context.report, null, 2)}\n\n`
+      : '';
+    const fileList = context.files.length
+      ? `Documents in this pack:\n${context.files.map((f, i) => `  ${i + 1}. ${f.filename}`).join('\n')}\n\n`
+      : '';
 
-  const groundingPreamble: Content = {
-    role: 'user',
-    parts: [
-      { text: `${reportBlurb}${fileList}Use the attached PDFs as the source of truth. The report above is your prior synthesis — refine or correct it if the user surfaces something new.` },
-      ...context.files.map((f) => createPartFromUri(f.ref.uri, f.ref.mimeType)),
-    ],
-  };
-  const groundingAck: Content = {
-    role: 'model',
-    parts: [{ text: 'Understood. I will answer questions strictly from these documents and the prior synthesis.' }],
-  };
+    const groundingPreamble: Content = {
+      role: 'user',
+      parts: [
+        { text: `${reportBlurb}${fileList}Use the attached PDFs as the source of truth. The report above is your prior synthesis — refine or correct it if the user surfaces something new.` },
+        ...context.files.map((f) => createPartFromUri(f.ref.uri, f.ref.mimeType)),
+      ],
+    };
+    const groundingAck: Content = {
+      role: 'model',
+      parts: [{ text: 'Understood. I will answer questions strictly from these documents and the prior synthesis.' }],
+    };
 
-  const historyContents: Content[] = history.map((t) => ({
-    role: t.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: t.content }],
-  }));
+    const historyContents: Content[] = history.map((t) => ({
+      role: t.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: t.content }],
+    }));
 
-  const response = await ai.models.generateContent({
-    model: MODELS.chat,
-    contents: [
-      groundingPreamble,
-      groundingAck,
-      ...historyContents,
-      { role: 'user', parts: [{ text: userMessage }] },
-    ],
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      temperature: 0.2,
-    },
+    const response = await ai.models.generateContent({
+      model: MODELS.chat,
+      contents: [
+        groundingPreamble,
+        groundingAck,
+        ...historyContents,
+        { role: 'user', parts: [{ text: userMessage }] },
+      ],
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        temperature: 0.2,
+      },
+    });
+
+    return response.text ?? '';
   });
-
-  return response.text ?? '';
 }

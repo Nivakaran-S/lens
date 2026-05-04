@@ -3,6 +3,7 @@ import { gemini, MODELS } from './client.js';
 import { PER_DOC_SCHEMAS } from './schemas.js';
 import { DOC_TYPE_HINTS, DOC_TYPE_LABELS, type DocType } from '../domain/doc-types.js';
 import type { GeminiFileRef } from './file-store.js';
+import { withFreeTierThrottle } from './throttle.js';
 
 const SYSTEM_INSTRUCTION = `You extract structured facts from a single UK auction legal-pack PDF.
 
@@ -19,36 +20,38 @@ export async function extractDocument(
   file: GeminiFileRef,
   filenameHint: string,
 ): Promise<unknown> {
-  const ai = gemini();
-  const schema = PER_DOC_SCHEMAS[docType];
+  return withFreeTierThrottle(`extract ${docType} (${filenameHint})`, async () => {
+    const ai = gemini();
+    const schema = PER_DOC_SCHEMAS[docType];
 
-  const response = await ai.models.generateContent({
-    model: MODELS.extract,
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          createPartFromUri(file.uri, file.mimeType),
-          {
-            text: `Document type: ${docType} (${DOC_TYPE_LABELS[docType]}).
+    const response = await ai.models.generateContent({
+      model: MODELS.extract,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            createPartFromUri(file.uri, file.mimeType),
+            {
+              text: `Document type: ${docType} (${DOC_TYPE_LABELS[docType]}).
 Hint: ${DOC_TYPE_HINTS[docType]}
 Filename: ${filenameHint}
 
 Extract the structured facts now.`,
-          },
-        ],
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+        temperature: 0,
       },
-    ],
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      responseMimeType: 'application/json',
-      responseSchema: schema,
-      temperature: 0,
-    },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error(`Empty extraction response for ${docType}`);
+
+    return JSON.parse(text);
   });
-
-  const text = response.text;
-  if (!text) throw new Error(`Empty extraction response for ${docType}`);
-
-  return JSON.parse(text);
 }

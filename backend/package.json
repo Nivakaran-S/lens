@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Lens — UK auction legal-pack analyzer (backend)",
   "scripts": {
-    "dev": "tsx watch src/dev.ts",
+    "dev": "tsx watch --env-file=.env src/dev.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/src/dev.js",
+    "start": "node --env-file=.env dist/src/dev.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -27,6 +27,7 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.5",
     "@types/node": "^22.0.0",
+    "nodemon": "^3.1.14",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.9"
