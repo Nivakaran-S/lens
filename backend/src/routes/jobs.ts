@@ -27,7 +27,7 @@ const createJobSchema = z.object({
 
 const MAX_ZIP_BYTES = 100 * 1024 * 1024;
 const DB_DEADLINE_MS = 8_000;
-const HANDLER_DEADLINE_MS = 20_000;
+const HANDLER_DEADLINE_MS = 120_000;
 
 export const jobsRoute = new Hono<AuthEnv>();
 
