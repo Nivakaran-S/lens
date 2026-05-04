@@ -16,7 +16,11 @@ export function gemini(): GoogleGenAI {
 export const MODELS = {
   classify: 'gemini-2.5-flash',
   extract: 'gemini-2.5-flash',
-  synthesize: 'gemini-2.5-pro',
+  // Note: gemini-2.5-pro is NOT in the Gemini API free tier (limit: 0).
+  // Use Flash for the unified analyseAll call so free-tier accounts work.
+  // If/when on paid tier, swap to 'gemini-2.5-pro' for richer cross-doc
+  // reasoning at higher cost.
+  synthesize: 'gemini-2.5-flash',
   chat: 'gemini-2.5-flash-lite',
 } as const;
 
