@@ -1,16 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import {
-  chatMessagesCollection,
   documentsCollection,
   ensureIndexes,
   jobsCollection,
-  type ChatMessageDoc,
   type DocumentDoc,
   type JobDoc,
   type JobStatus,
 } from './mongo.js';
 
-export type { ChatMessageDoc as ChatMessageRow, DocumentDoc as DocumentRow, JobDoc as JobRow, JobStatus };
+export type { DocumentDoc as DocumentRow, JobDoc as JobRow, JobStatus };
 
 const now = () => new Date().toISOString();
 
@@ -95,29 +93,6 @@ export async function listDocumentsForJob(jobId: string): Promise<DocumentDoc[]>
   const out: DocumentDoc[] = [];
   for await (const d of cursor) out.push(stripId(d) as DocumentDoc);
   return out;
-}
-
-export async function listChatMessages(jobId: string): Promise<ChatMessageDoc[]> {
-  const chats = await chatMessagesCollection();
-  const cursor = chats.find({ job_id: jobId }).sort({ created_at: 1 });
-  const out: ChatMessageDoc[] = [];
-  for await (const m of cursor) out.push(stripId(m) as ChatMessageDoc);
-  return out;
-}
-
-export async function insertChatMessage(
-  jobId: string,
-  role: 'user' | 'assistant',
-  content: string,
-): Promise<void> {
-  const chats = await chatMessagesCollection();
-  await chats.insertOne({
-    id: randomUUID(),
-    job_id: jobId,
-    role,
-    content,
-    created_at: now(),
-  });
 }
 
 type DocumentInsert = {

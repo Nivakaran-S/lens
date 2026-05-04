@@ -6,7 +6,6 @@ import type { JobDetail } from '../../../../lib/types';
 import { JobStatusPill } from '../../../../components/JobStatusPill';
 import { ReportView } from '../../../../components/ReportView';
 import { DocumentList } from '../../../../components/DocumentList';
-import { ChatPanel } from '../../../../components/ChatPanel';
 
 const TERMINAL = new Set(['done', 'failed']);
 const POLL_MS = 2000;
@@ -87,8 +86,6 @@ export default function JobPage({ params }: { params: Promise<{ jobId: string }>
       {job.report && <ReportView report={job.report} />}
 
       {documents.length > 0 && <DocumentList jobId={jobId} documents={documents} />}
-
-      <ChatPanel jobId={jobId} enabled={job.status === 'done'} />
     </div>
   );
 }

@@ -3,7 +3,6 @@
 import { getSupabaseBrowser } from './supabase/client';
 import { PUBLIC_ENV } from './env';
 import type {
-  ChatMessage,
   CreateJobResponse,
   JobDetail,
   JobSummary,
@@ -40,13 +39,6 @@ export const api = {
   startJob: (jobId: string) =>
     request<{ jobId: string; status: string }>(`/api/jobs/${jobId}/start`, { method: 'POST' }),
   getJob: (jobId: string) => request<JobDetail>(`/api/jobs/${jobId}`),
-  getMessages: (jobId: string) =>
-    request<{ messages: ChatMessage[] }>(`/api/jobs/${jobId}/messages`),
-  sendMessage: (jobId: string, message: string) =>
-    request<{ reply: string }>(`/api/jobs/${jobId}/chat`, {
-      method: 'POST',
-      body: JSON.stringify({ message }),
-    }),
   getDocumentUrl: (jobId: string, docId: string) =>
     request<{ url: string; expiresInSeconds: number }>(
       `/api/jobs/${jobId}/documents/${docId}/url`,

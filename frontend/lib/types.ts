@@ -78,10 +78,3 @@ export type CreateJobResponse = {
   storageKey: string;
   uploadUrl: string;
 };
-
-export type ChatMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  created_at: string;
-};

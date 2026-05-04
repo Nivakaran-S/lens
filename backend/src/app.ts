@@ -6,7 +6,6 @@ import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
 import { inngest } from './inngest/client.js';
 import { analyzePack } from './inngest/analyze-pack.js';
 import { jobsRoute } from './routes/jobs.js';
-import { chatRoute } from './routes/chat.js';
 import { requestLogger } from './util/log.js';
 import { TimeoutError } from './util/timeout.js';
 
@@ -123,7 +122,6 @@ const inngestHandler = inngestServe({ client: inngest, functions: [analyzePack] 
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', (c) => inngestHandler(c));
 
 app.route('/api/jobs', jobsRoute);
-app.route('/api/jobs', chatRoute);
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) {

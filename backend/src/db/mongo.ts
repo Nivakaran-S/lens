@@ -44,14 +44,6 @@ export type DocumentDoc = {
   created_at: string;
 };
 
-export type ChatMessageDoc = {
-  id: string;
-  job_id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  created_at: string;
-};
-
 // Storage shape — what MongoDB sees, with the auto-generated _id.
 type WithMongoId<T> = T & { _id?: ObjectId };
 
@@ -114,10 +106,6 @@ export async function documentsCollection(): Promise<Collection<WithMongoId<Docu
   return (await mongo()).collection<WithMongoId<DocumentDoc>>('documents');
 }
 
-export async function chatMessagesCollection(): Promise<Collection<WithMongoId<ChatMessageDoc>>> {
-  return (await mongo()).collection<WithMongoId<ChatMessageDoc>>('chat_messages');
-}
-
 let indexesEnsured = false;
 export async function ensureIndexes(): Promise<void> {
   if (indexesEnsured) return;
@@ -127,13 +115,11 @@ export async function ensureIndexes(): Promise<void> {
   try {
     const jobs = await jobsCollection();
     const documents = await documentsCollection();
-    const chats = await chatMessagesCollection();
     await Promise.all([
       jobs.createIndex({ id: 1 }, { unique: true }),
       jobs.createIndex({ user_id: 1, created_at: -1 }),
       documents.createIndex({ id: 1 }, { unique: true }),
       documents.createIndex({ job_id: 1, created_at: 1 }),
-      chats.createIndex({ job_id: 1, created_at: 1 }),
     ]);
     log.info(`ensureIndexes: done in ${Date.now() - t0}ms`);
   } catch (err) {
@@ -145,4 +131,4 @@ export async function ensureIndexes(): Promise<void> {
   }
 }
 
-export type { JobDoc as JobRow, DocumentDoc as DocumentRow, ChatMessageDoc as ChatMessageRow };
+export type { JobDoc as JobRow, DocumentDoc as DocumentRow };
