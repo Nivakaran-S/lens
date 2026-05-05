@@ -34,3 +34,20 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
+      # Stripe — set in Render dashboard
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_CURRENCY
+        value: gbp
+      # Roles + credits policy
+      - key: ADMIN_EMAILS
+        sync: false  # comma-separated list of admin email addresses
+      - key: INITIAL_FREE_CREDITS
+        value: '10'
+      - key: COST_PER_ANALYSIS
+        value: '1'
+      # Frontend URL — used for Stripe success/cancel redirects
+      - key: FRONTEND_URL
+        sync: false  # set to your Vercel URL, e.g. https://lens-auck.vercel.app

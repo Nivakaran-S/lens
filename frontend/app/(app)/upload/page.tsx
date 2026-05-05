@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud } from 'lucide-react';
-import { api } from '../../../lib/api';
+import { ApiError, api } from '../../../lib/api';
 
 const MAX_BYTES = 100 * 1024 * 1024;
 
@@ -49,7 +49,16 @@ export default function UploadPage() {
         setProgress(100);
 
         setStage('starting');
-        await api.startJob(created.jobId);
+        try {
+          await api.startJob(created.jobId);
+        } catch (startErr) {
+          // 402 = insufficient credits → bounce to /billing
+          if (startErr instanceof ApiError && startErr.status === 402) {
+            router.push(`/billing?reason=insufficient&job=${created.jobId}`);
+            return;
+          }
+          throw startErr;
+        }
 
         router.push(`/jobs/${created.jobId}`);
       } catch (e: unknown) {

@@ -19,6 +19,8 @@ import {
 import { logger as fallbackLogger, type Logger } from '../util/log.js';
 import { withDeadline } from '../util/timeout.js';
 import { runAnalysis } from '../worker/analyse.js';
+import { deductCredits } from '../db/users.js';
+import { env } from '../env.js';
 
 const createJobSchema = z.object({
   filename: z.string().min(1).max(256),
@@ -120,12 +122,33 @@ jobsRoute.post('/:id/start', async (c) => {
     throw new HTTPException(400, { message: 'Upload not found in storage' });
   }
 
+  // Deduct credits BEFORE marking the job uploaded so we never start work
+  // the user can't pay for. deductCredits is atomic: if the user doesn't
+  // have enough, no charge is made and we return 402 here.
+  // runAnalysis automatically refunds on failure so transient errors don't
+  // burn the user's credits.
+  const cost = env().COST_PER_ANALYSIS;
+  const charge = await deductCredits(user.id, cost, {
+    source: 'analysis_charge',
+    note: `Charge for analysis ${job.id}`,
+  });
+  if (!charge.ok) {
+    log.warn('insufficient credits', {
+      sub: user.id.slice(0, 8),
+      balance: charge.balance,
+      needed: cost,
+    });
+    throw new HTTPException(402, {
+      message: `Insufficient credits (have ${charge.balance}, need ${cost})`,
+    });
+  }
+  log.info(`charged ${cost} credit(s); balance=${charge.balance}`);
+
   await updateJob(job.id, { status: 'uploaded', status_detail: 'Queued for analysis' });
 
   // Fire-and-forget the analysis pipeline. The handler returns immediately;
-  // runAnalysis updates job.status as it works. Frontend polls GET /jobs/:id.
-  // runAnalysis catches its own errors and persists them to the job row, so
-  // this .catch is only a backstop for diagnostic logging.
+  // runAnalysis updates job.status as it works. On failure, runAnalysis
+  // refunds the credit so the user isn't charged for failed parses.
   runAnalysis(job.id, log.child(job.id.slice(0, 8))).catch((err) => {
     log.error('runAnalysis unexpected throw', {
       error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),

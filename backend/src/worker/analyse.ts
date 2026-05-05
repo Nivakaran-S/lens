@@ -5,8 +5,10 @@ import {
   updateDocument,
   updateJob,
 } from '../db/jobs.js';
+import { addCredits } from '../db/users.js';
 import { applyRiskRules } from '../domain/risk-rules.js';
 import type { DocType } from '../domain/doc-types.js';
+import { env } from '../env.js';
 import { analyseAll, type DocInput } from '../gemini/analyseAll.js';
 import { ensureFreshGeminiFile } from '../gemini/file-store.js';
 import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/r2.js';
@@ -127,6 +129,25 @@ export async function runAnalysis(jobId: string, logArg?: Logger): Promise<void>
     } catch (persistErr) {
       log.error('failed to persist failed status', {
         error: persistErr instanceof Error ? persistErr.message : String(persistErr),
+      });
+    }
+
+    // Refund the credit charged on /start so transient failures don't burn
+    // the user's balance. We do this best-effort: if the job lookup or
+    // refund fails, the failure status is still persisted above.
+    try {
+      const job = await getJob(jobId);
+      if (job) {
+        const refund = env().COST_PER_ANALYSIS;
+        const result = await addCredits(job.user_id, refund, {
+          source: 'refund',
+          note: `Refund for failed job ${jobId}`,
+        });
+        log.info(`refunded ${refund} credit(s); balance=${result.balance}`);
+      }
+    } catch (refundErr) {
+      log.error('refund failed', {
+        error: refundErr instanceof Error ? refundErr.message : String(refundErr),
       });
     }
   }

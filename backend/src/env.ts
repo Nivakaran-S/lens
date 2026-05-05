@@ -20,6 +20,28 @@ const schema = z.object({
   // Gemini
   GEMINI_API_KEY: z.string().min(1).optional(),
 
+  // Stripe (optional in dev — backend can boot without billing)
+  STRIPE_SECRET_KEY: z.string().min(1).optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
+  STRIPE_CURRENCY: z.string().default('gbp'),
+
+  // Roles + credits policy
+  // Comma-separated emails that should be elevated to role=admin on first sign-in.
+  ADMIN_EMAILS: z.string().default(''),
+  // Free credits a brand-new user receives.
+  INITIAL_FREE_CREDITS: z
+    .string()
+    .default('10')
+    .transform((s) => Math.max(0, parseInt(s, 10) || 0)),
+  // Credits charged per pack analysis. Refunded automatically if analysis fails.
+  COST_PER_ANALYSIS: z
+    .string()
+    .default('1')
+    .transform((s) => Math.max(0, parseInt(s, 10) || 1)),
+
+  // Frontend URL — used for Stripe success/cancel redirects.
+  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+
   // CORS
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 });
@@ -55,6 +77,13 @@ const OPTIONAL_KEYS = [
   'MONGODB_DB_NAME',
   'R2_BUCKET',
   'GEMINI_API_KEY',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_CURRENCY',
+  'ADMIN_EMAILS',
+  'INITIAL_FREE_CREDITS',
+  'COST_PER_ANALYSIS',
+  'FRONTEND_URL',
   'CORS_ORIGINS',
 ] as const;
 
@@ -82,4 +111,17 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   if (allow.includes('*')) return true;
   const normalised = origin.replace(/\/+$/, '');
   return allow.includes(normalised);
+}
+
+/**
+ * Returns the set of admin email addresses (lowercased, trimmed) from
+ * ADMIN_EMAILS. Used at user-creation time to decide initial role.
+ */
+export function adminEmails(): Set<string> {
+  return new Set(
+    (process.env.ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
 }

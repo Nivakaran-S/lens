@@ -2,7 +2,12 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
+import { adminRoute } from './routes/admin.js';
+import { checkoutRoute } from './routes/checkout.js';
 import { jobsRoute } from './routes/jobs.js';
+import { meRoute } from './routes/me.js';
+import { packagesRoute } from './routes/packages.js';
+import { stripeRoute } from './routes/stripe.js';
 import { requestLogger } from './util/log.js';
 import { TimeoutError } from './util/timeout.js';
 
@@ -115,7 +120,18 @@ app.get('/api/diag/services', async (c) => {
   });
 });
 
+// Stripe webhook MUST come before any other middleware that mutates the body.
+// requestLogger is fine (read-only); cors() is also fine because Stripe's
+// servers don't trigger preflight. We mount stripeRoute alongside the others
+// — it relies on the raw body via c.req.text() which Hono lets us read
+// regardless of upstream middleware.
+app.route('/api/stripe', stripeRoute);
+
+app.route('/api/me', meRoute);
 app.route('/api/jobs', jobsRoute);
+app.route('/api/packages', packagesRoute);
+app.route('/api/checkout', checkoutRoute);
+app.route('/api/admin', adminRoute);
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) {

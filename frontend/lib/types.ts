@@ -78,3 +78,43 @@ export type CreateJobResponse = {
   storageKey: string;
   uploadUrl: string;
 };
+
+export type UserRole = 'user' | 'admin';
+
+export type UserProfile = {
+  id: string;
+  email: string;
+  role: UserRole;
+  credits: number;
+};
+
+export type CreditPackage = {
+  id: string;
+  name: string;
+  credits: number;
+  price_cents: number;
+  currency: string;
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AdminUser = UserProfile & {
+  stripe_customer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Payment = {
+  id: string;
+  user_id: string;
+  package_id: string | null;
+  source: 'stripe' | 'admin_grant' | 'signup_bonus' | 'refund' | 'analysis_charge';
+  credits_delta: number;
+  amount_cents: number | null;
+  currency: string | null;
+  stripe_session_id: string | null;
+  admin_user_id: string | null;
+  note: string | null;
+  created_at: string;
+};

@@ -44,6 +44,50 @@ export type DocumentDoc = {
   created_at: string;
 };
 
+export type UserRole = 'user' | 'admin';
+
+export type UserDoc = {
+  id: string; // Supabase auth user_id (uuid) — primary key
+  email: string;
+  role: UserRole;
+  credits: number; // never negative; enforced via conditional update in deductCredits
+  stripe_customer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreditPackageDoc = {
+  id: string;
+  name: string;
+  credits: number;
+  price_cents: number; // 999 = £9.99
+  currency: string; // 'gbp' | 'usd' etc.
+  active: boolean; // soft-delete via active=false
+  created_at: string;
+  updated_at: string;
+};
+
+export type PaymentSource =
+  | 'stripe'           // user purchased credits via Stripe Checkout
+  | 'admin_grant'      // admin manually allocated (signed delta)
+  | 'signup_bonus'     // free credits awarded on first sign-in
+  | 'refund'           // automatic refund after a failed analysis
+  | 'analysis_charge'; // negative delta when starting an analysis
+
+export type PaymentDoc = {
+  id: string;
+  user_id: string;
+  package_id: string | null;
+  source: PaymentSource;
+  credits_delta: number; // signed: +N for grants/purchases, -N for deductions if you ever log them
+  amount_cents: number | null; // null for non-cash sources
+  currency: string | null;
+  stripe_session_id: string | null; // unique sparse — ensures webhook idempotency
+  admin_user_id: string | null; // when source='admin_grant'
+  note: string | null;
+  created_at: string;
+};
+
 // Storage shape — what MongoDB sees, with the auto-generated _id.
 type WithMongoId<T> = T & { _id?: ObjectId };
 
@@ -106,6 +150,18 @@ export async function documentsCollection(): Promise<Collection<WithMongoId<Docu
   return (await mongo()).collection<WithMongoId<DocumentDoc>>('documents');
 }
 
+export async function usersCollection(): Promise<Collection<WithMongoId<UserDoc>>> {
+  return (await mongo()).collection<WithMongoId<UserDoc>>('users');
+}
+
+export async function packagesCollection(): Promise<Collection<WithMongoId<CreditPackageDoc>>> {
+  return (await mongo()).collection<WithMongoId<CreditPackageDoc>>('credit_packages');
+}
+
+export async function paymentsCollection(): Promise<Collection<WithMongoId<PaymentDoc>>> {
+  return (await mongo()).collection<WithMongoId<PaymentDoc>>('payments');
+}
+
 let indexesEnsured = false;
 export async function ensureIndexes(): Promise<void> {
   if (indexesEnsured) return;
@@ -115,11 +171,25 @@ export async function ensureIndexes(): Promise<void> {
   try {
     const jobs = await jobsCollection();
     const documents = await documentsCollection();
+    const users = await usersCollection();
+    const packages = await packagesCollection();
+    const payments = await paymentsCollection();
     await Promise.all([
       jobs.createIndex({ id: 1 }, { unique: true }),
       jobs.createIndex({ user_id: 1, created_at: -1 }),
       documents.createIndex({ id: 1 }, { unique: true }),
       documents.createIndex({ job_id: 1, created_at: 1 }),
+      users.createIndex({ id: 1 }, { unique: true }),
+      users.createIndex({ email: 1 }, { unique: true }),
+      packages.createIndex({ id: 1 }, { unique: true }),
+      packages.createIndex({ active: 1, created_at: -1 }),
+      payments.createIndex({ user_id: 1, created_at: -1 }),
+      // Sparse unique guarantees webhook idempotency: same Stripe session
+      // can never produce two payment rows.
+      payments.createIndex(
+        { stripe_session_id: 1 },
+        { unique: true, sparse: true },
+      ),
     ]);
     log.info(`ensureIndexes: done in ${Date.now() - t0}ms`);
   } catch (err) {
@@ -131,4 +201,10 @@ export async function ensureIndexes(): Promise<void> {
   }
 }
 
-export type { JobDoc as JobRow, DocumentDoc as DocumentRow };
+export type {
+  JobDoc as JobRow,
+  DocumentDoc as DocumentRow,
+  UserDoc as UserRow,
+  CreditPackageDoc as CreditPackageRow,
+  PaymentDoc as PaymentRow,
+};
