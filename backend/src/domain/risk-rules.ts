@@ -20,6 +20,16 @@ export type CrossDocumentConsistency = {
   notes?: string[];
 };
 
+// Each bullet under "Overall risk" cites the source documents it was derived
+// from — verbatim filenames matching documents in the uploaded ZIP. Some
+// findings synthesise across multiple docs (e.g. executor-mismatch needs
+// both the grant of probate and the title register), so `sources` is an
+// array.
+export type HeadlineFinding = {
+  finding: string;
+  sources: string[];
+};
+
 export type Report = {
   property_summary: {
     address?: string;
@@ -29,7 +39,9 @@ export type Report = {
     lot_id?: string;
   };
   overall_risk: 'low' | 'medium' | 'high' | 'critical';
-  headline_findings: string[];
+  // Legacy shape (string[]) is kept readable for old jobs persisted before
+  // the source-citation change. New analyses always produce HeadlineFinding[].
+  headline_findings: Array<HeadlineFinding | string>;
   risks: Risk[];
   cross_document_consistency: CrossDocumentConsistency;
   buyer_questions_for_solicitor: string[];

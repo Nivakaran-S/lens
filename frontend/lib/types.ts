@@ -55,6 +55,11 @@ export type Risk = {
   blocks_completion: boolean;
 };
 
+export type HeadlineFinding = {
+  finding: string;
+  sources: string[];
+};
+
 export type SynthesisReport = {
   property_summary: {
     address?: string;
@@ -63,7 +68,10 @@ export type SynthesisReport = {
     lot_id?: string;
   };
   overall_risk: 'low' | 'medium' | 'high' | 'critical';
-  headline_findings: string[];
+  // Old jobs persisted before the source-citation change have plain strings.
+  // New analyses always produce HeadlineFinding objects; ReportView handles
+  // both.
+  headline_findings: Array<HeadlineFinding | string>;
   risks: Risk[];
   cross_document_consistency: {
     executor_matches_proprietor?: boolean;

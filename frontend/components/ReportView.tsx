@@ -1,4 +1,5 @@
-import type { SynthesisReport } from '../lib/types';
+import { FileText } from 'lucide-react';
+import type { HeadlineFinding, SynthesisReport } from '../lib/types';
 import { RiskCard } from './RiskCard';
 
 const OVERALL_STYLE: Record<SynthesisReport['overall_risk'], string> = {
@@ -7,6 +8,10 @@ const OVERALL_STYLE: Record<SynthesisReport['overall_risk'], string> = {
   high: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200',
   critical: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
 };
+
+function isObjectFinding(f: HeadlineFinding | string): f is HeadlineFinding {
+  return typeof f === 'object' && f !== null && 'finding' in f;
+}
 
 export function ReportView({ report }: { report: SynthesisReport }) {
   return (
@@ -20,10 +25,30 @@ export function ReportView({ report }: { report: SynthesisReport }) {
         </div>
 
         {report.headline_findings.length > 0 && (
-          <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-            {report.headline_findings.map((line, i) => (
-              <li key={i}>• {line}</li>
-            ))}
+          <ul className="mt-3 space-y-3 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+            {report.headline_findings.map((entry, i) => {
+              const finding = isObjectFinding(entry) ? entry.finding : entry;
+              const sources = isObjectFinding(entry) ? entry.sources : [];
+              return (
+                <li key={i}>
+                  <div>• {finding}</div>
+                  {sources.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 pl-3">
+                      {sources.map((s, j) => (
+                        <span
+                          key={`${i}-${j}`}
+                          title={s}
+                          className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
+                        >
+                          <FileText className="h-3 w-3 shrink-0" aria-hidden />
+                          <span className="truncate">{s}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

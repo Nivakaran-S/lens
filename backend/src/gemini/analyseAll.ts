@@ -60,7 +60,11 @@ Output STRICT JSON in the exact shape below. No prose, no markdown, no code fenc
     "lot_id": <string if shown>
   },
   "overall_risk": <low|medium|high|critical>,
-  "headline_findings": [<3–5 short sentences a buyer reads first>],
+  "headline_findings": [
+    { "finding": <one short sentence a buyer reads first>,
+      "sources": [<verbatim filename(s) of the document(s) that support this point — must match one of the filenames in the pack list above; usually 1, up to 3 if the finding synthesises across documents>]
+    }
+  ],
   "risks": [
     { "severity": <critical|high|medium|low|info>,
       "category": <title|legal|physical|planning|environmental|financial|completion>,
@@ -112,7 +116,8 @@ Rules:
 - For UK addresses, normalise spacing in postcodes (e.g. "NG19 6HN").
 - For dates, prefer ISO 8601 (YYYY-MM-DD); if only a year is shown, output "YYYY".
 - For monetary values, output the number in GBP (e.g. 1500, not "£1,500").
-- ANY number found in any document — whether written as digits ("28 days", "£1,500", "5%") or in word form ("twenty-eight days", "one thousand five hundred pounds", "five per cent") — MUST appear in the relevant headline_findings or risks[].explanation when it materially affects the buyer (e.g. completion period, fees, percentages, distances, dates, areas, ages, EPC scores, deposit amounts, premium amounts). Convert word-form numbers to digit form in the output. Never round or summarise numeric values; preserve them exactly as stated in the source.
+- ANY number found in any document — whether written as digits ("28 days", "£1,500", "5%") or in word form ("twenty-eight days", "one thousand five hundred pounds", "five per cent") — MUST appear in the relevant headline_findings[].finding or risks[].explanation when it materially affects the buyer (e.g. completion period, fees, percentages, distances, dates, areas, ages, EPC scores, deposit amounts, premium amounts). Convert word-form numbers to digit form in the output. Never round or summarise numeric values; preserve them exactly as stated in the source.
+- headline_findings: produce 3–5 entries. Each entry MUST cite at least one filename in "sources" — copy the filename verbatim from the pack list above (case-sensitive). Never invent a filename. If a finding genuinely spans multiple docs (e.g. executor mismatch crosses the grant of probate and the title register), list every contributing filename.
 - Severity guidance: critical = blocks completion or causes major financial harm; high = materially affects bid or post-completion plans; medium = should know about, may need a quote; low = noted for completeness; info = neutral fact.
 - Always populate buyer_questions_for_solicitor with 5–10 specific, actionable questions.
 - Set overall_risk to the highest severity present in risks[].
