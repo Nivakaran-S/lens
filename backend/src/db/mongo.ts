@@ -162,6 +162,38 @@ export async function paymentsCollection(): Promise<Collection<WithMongoId<Payme
   return (await mongo()).collection<WithMongoId<PaymentDoc>>('payments');
 }
 
+// Webhook idempotency on stripe_session_id needs a unique index, but the
+// field is null on most rows (admin grants, signup bonuses, etc.). A plain
+// `sparse: true` index treats null as a value and collides on the second
+// null insert, so we use a partial filter index that only applies when the
+// field is actually a string. An older deploy may have created the broken
+// sparse index; drop it before recreating with the correct options since
+// Mongo cannot change index options in place.
+async function ensureStripeSessionIndex(
+  payments: Collection<WithMongoId<PaymentDoc>>,
+): Promise<void> {
+  const existing = await payments.indexes();
+  const broken = existing.find(
+    (i) =>
+      i.key &&
+      Object.keys(i.key).length === 1 &&
+      i.key.stripe_session_id === 1 &&
+      // missing or undefined partialFilterExpression means it's the old sparse index
+      !i.partialFilterExpression,
+  );
+  if (broken && broken.name) {
+    log.info(`ensureStripeSessionIndex: dropping legacy index ${broken.name}`);
+    await payments.dropIndex(broken.name);
+  }
+  await payments.createIndex(
+    { stripe_session_id: 1 },
+    {
+      unique: true,
+      partialFilterExpression: { stripe_session_id: { $type: 'string' } },
+    },
+  );
+}
+
 let indexesEnsured = false;
 export async function ensureIndexes(): Promise<void> {
   if (indexesEnsured) return;
@@ -184,12 +216,7 @@ export async function ensureIndexes(): Promise<void> {
       packages.createIndex({ id: 1 }, { unique: true }),
       packages.createIndex({ active: 1, created_at: -1 }),
       payments.createIndex({ user_id: 1, created_at: -1 }),
-      // Sparse unique guarantees webhook idempotency: same Stripe session
-      // can never produce two payment rows.
-      payments.createIndex(
-        { stripe_session_id: 1 },
-        { unique: true, sparse: true },
-      ),
+      ensureStripeSessionIndex(payments),
     ]);
     log.info(`ensureIndexes: done in ${Date.now() - t0}ms`);
   } catch (err) {
