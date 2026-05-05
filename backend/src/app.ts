@@ -130,7 +130,7 @@ app.route('/api/stripe', stripeRoute);
 app.route('/api/me', meRoute);
 app.route('/api/jobs', jobsRoute);
 app.route('/api/packages', packagesRoute);
-app.route('/api/checkout', checkoutRoute);
+app.route('/api/payment-intent', checkoutRoute);
 app.route('/api/admin', adminRoute);
 
 app.onError((err, c) => {

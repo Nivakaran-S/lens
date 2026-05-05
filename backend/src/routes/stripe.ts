@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import type Stripe from 'stripe';
 import { addCredits } from '../db/users.js';
 import { getPackage } from '../db/packages.js';
-import { paymentForSession } from '../db/payments.js';
+import { paymentForIntent } from '../db/payments.js';
 import { verifyWebhook } from '../payments/stripe.js';
 import { logger as fallbackLogger, type Logger } from '../util/log.js';
 
@@ -13,9 +13,13 @@ export const stripeRoute = new Hono();
  * POST /api/stripe/webhook
  *
  * Receives Stripe webhooks. The signature header must be verified BEFORE we
- * trust the body. Idempotency is enforced via the unique-sparse index on
- * payments.stripe_session_id: if the same session_id arrives twice, the
- * second insert hits E11000 and we treat it as already-processed.
+ * trust the body. Idempotency is enforced via the unique partial index on
+ * payments.stripe_payment_intent_id: if the same intent id arrives twice,
+ * the second insert hits E11000 and we treat it as already-processed.
+ *
+ * Embedded checkout uses PaymentIntents (not Checkout Sessions), so we
+ * listen for `payment_intent.succeeded`. Other events are acked and
+ * ignored — Stripe still expects 2xx so it stops retrying.
  *
  * NOT auth-protected by Supabase JWT — Stripe doesn't have one. The
  * webhook secret IS the auth.
@@ -44,31 +48,31 @@ stripeRoute.post('/webhook', async (c) => {
 
   log.info(`webhook: ${event.type} id=${event.id}`);
 
-  if (event.type !== 'checkout.session.completed') {
-    // Other events (payment_intent.created, etc.) — ack and ignore.
+  if (event.type !== 'payment_intent.succeeded') {
+    // payment_intent.created/processing, charge.*, etc. — ack and ignore.
     return c.json({ received: true, ignored: event.type });
   }
 
-  const session = event.data.object as Stripe.Checkout.Session;
-  const userId = session.metadata?.userId;
-  const packageId = session.metadata?.packageId;
-  const sessionId = session.id;
+  const intent = event.data.object as Stripe.PaymentIntent;
+  const userId = intent.metadata?.userId;
+  const packageId = intent.metadata?.packageId;
+  const intentId = intent.id;
 
-  if (!userId || !packageId || !sessionId) {
+  if (!userId || !packageId || !intentId) {
     log.error('webhook: missing required metadata', {
       userId,
       packageId,
-      sessionId,
+      intentId,
     });
-    // Return 200 so Stripe doesn't retry — a malformed metadata payload
-    // is our bug to fix at checkout creation, not something retries help.
+    // Return 200 so Stripe doesn't retry — malformed metadata is our bug
+    // at intent-creation time, not something retries help.
     return c.json({ received: true, error: 'missing metadata' });
   }
 
-  // Idempotency check: if we already credited this session, do nothing.
-  const existing = await paymentForSession(sessionId);
+  // Idempotency check: if we already credited this intent, do nothing.
+  const existing = await paymentForIntent(intentId);
   if (existing) {
-    log.info(`webhook: session ${sessionId} already processed; skipping`);
+    log.info(`webhook: intent ${intentId} already processed; skipping`);
     return c.json({ received: true, idempotent: true });
   }
 
@@ -79,8 +83,8 @@ stripeRoute.post('/webhook', async (c) => {
   }
 
   const credits = pkg.credits;
-  const amountTotal = session.amount_total ?? pkg.price_cents;
-  const currency = session.currency ?? pkg.currency;
+  const amountTotal = intent.amount_received ?? intent.amount ?? pkg.price_cents;
+  const currency = intent.currency ?? pkg.currency;
 
   try {
     const result = await addCredits(userId, credits, {
@@ -88,8 +92,8 @@ stripeRoute.post('/webhook', async (c) => {
       source: 'stripe',
       amount_cents: amountTotal,
       currency,
-      stripe_session_id: sessionId,
-      note: `Stripe checkout ${sessionId}`,
+      stripe_payment_intent_id: intentId,
+      note: `Stripe payment ${intentId}`,
     });
     log.info(
       `webhook: granted ${credits} credits to ${userId.slice(0, 8)}; balance=${result.balance}`,
@@ -97,7 +101,7 @@ stripeRoute.post('/webhook', async (c) => {
     return c.json({ received: true, balance: result.balance });
   } catch (err) {
     // Concurrent webhook retry won the race — another insert with the
-    // same stripe_session_id already happened. Treat as success.
+    // same payment_intent_id already happened. Treat as success.
     if (err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 11000) {
       log.info(`webhook: race lost (E11000) — already credited; skipping`);
       return c.json({ received: true, idempotent: true });

@@ -4,8 +4,7 @@ import { z } from 'zod';
 import { requireAuth, type AuthEnv } from '../auth.js';
 import { getPackage } from '../db/packages.js';
 import { getUser, setStripeCustomerId } from '../db/users.js';
-import { env } from '../env.js';
-import { createCheckoutSession } from '../payments/stripe.js';
+import { createPaymentIntent } from '../payments/stripe.js';
 
 export const checkoutRoute = new Hono<AuthEnv>();
 
@@ -14,9 +13,14 @@ checkoutRoute.use('*', requireAuth);
 const bodySchema = z.object({ packageId: z.string().min(1) });
 
 /**
- * POST /api/checkout — body: { packageId }
- * Creates a Stripe Checkout Session for the chosen package and returns the
- * hosted-checkout URL. The frontend redirects the browser to that URL.
+ * POST /api/payment-intent — body: { packageId }
+ *
+ * Creates a Stripe PaymentIntent for the chosen package and returns the
+ * client_secret. The frontend uses Stripe Elements (`<PaymentElement>`) to
+ * render the payment form on our own page; we never redirect to a
+ * Stripe-hosted checkout.
+ *
+ * Mounted at `/api/payment-intent` from app.ts.
  */
 checkoutRoute.post('/', async (c) => {
   const auth = c.get('user');
@@ -34,29 +38,34 @@ checkoutRoute.post('/', async (c) => {
   const user = await getUser(auth.id);
   if (!user) throw new HTTPException(404, { message: 'User not found' });
 
-  const frontend = env().FRONTEND_URL.replace(/\/+$/, '');
-
-  let session;
+  let intent;
   try {
-    session = await createCheckoutSession({
-      user,
-      package: pkg,
-      successUrl: `${frontend}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${frontend}/billing?canceled=1`,
-    });
+    intent = await createPaymentIntent({ user, package: pkg });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('STRIPE_SECRET_KEY')) {
       throw new HTTPException(503, { message: 'Stripe is not configured on this server' });
     }
-    throw new HTTPException(502, { message: `Stripe checkout failed: ${msg}` });
+    throw new HTTPException(502, { message: `Stripe payment-intent failed: ${msg}` });
   }
 
-  // Persist the Stripe customer id on first purchase so future checkouts
+  // Persist the Stripe customer id on first purchase so future intents
   // group under the same customer in Stripe's dashboard.
-  if (session.customerId && !user.stripe_customer_id) {
-    await setStripeCustomerId(user.id, session.customerId);
+  if (intent.customerId && !user.stripe_customer_id) {
+    await setStripeCustomerId(user.id, intent.customerId);
   }
 
-  return c.json({ url: session.url });
+  return c.json({
+    clientSecret: intent.clientSecret,
+    paymentIntentId: intent.paymentIntentId,
+    amount: intent.amount,
+    currency: intent.currency,
+    package: {
+      id: pkg.id,
+      name: pkg.name,
+      credits: pkg.credits,
+      price_cents: pkg.price_cents,
+      currency: pkg.currency,
+    },
+  });
 });

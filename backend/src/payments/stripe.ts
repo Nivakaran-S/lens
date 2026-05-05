@@ -13,9 +13,9 @@ export function getStripe(): Stripe {
   }
   cached = new Stripe(key, {
     // Pinned API version — bumping requires explicit testing of webhook
-    // event shape and checkout response shape. The version pinned here
-    // is the one shipped with the SDK at the time of this commit; do
-    // not change without validating event-shape parsers below.
+    // event shape. The version pinned here is the one shipped with the SDK
+    // at the time of this commit; do not change without validating the
+    // PaymentIntent + payment_intent.succeeded shapes used below.
     apiVersion: '2025-02-24.acacia',
     typescript: true,
   });
@@ -23,65 +23,63 @@ export function getStripe(): Stripe {
 }
 
 /**
- * Create a Stripe Checkout Session for purchasing a credit package.
- * Uses inline `price_data` rather than a pre-created Stripe Price so the
- * admin can edit price/name in our DB without Stripe dashboard changes.
+ * Create a Stripe PaymentIntent for purchasing a credit package. The client
+ * secret is returned to the browser and consumed by Stripe Elements
+ * (`<PaymentElement>`) to render the embedded payment form on our own page —
+ * no redirect to a Stripe-hosted checkout.
  *
- * `metadata.userId` and `metadata.packageId` are the only thread between
- * the checkout completion event and our credit-grant logic — they MUST
- * survive the round-trip via the webhook.
+ * `metadata.userId` and `metadata.packageId` are the only thread between the
+ * payment_intent.succeeded webhook and our credit-grant logic, so they MUST
+ * survive the round-trip.
  */
-export async function createCheckoutSession(args: {
+export async function createPaymentIntent(args: {
   user: Pick<UserDoc, 'id' | 'email' | 'stripe_customer_id'>;
   package: Pick<CreditPackageDoc, 'id' | 'name' | 'credits' | 'price_cents' | 'currency'>;
-  successUrl: string;
-  cancelUrl: string;
-}): Promise<{ sessionId: string; url: string; customerId: string | null }> {
+}): Promise<{
+  paymentIntentId: string;
+  clientSecret: string;
+  customerId: string | null;
+  amount: number;
+  currency: string;
+}> {
   const stripe = getStripe();
 
-  // Reuse the user's customer record across purchases — Stripe's dashboard
-  // groups payments per customer so support is simpler.
-  const customer = args.user.stripe_customer_id ?? undefined;
-  const customerEmail = customer ? undefined : args.user.email;
+  // Reuse the user's customer record across purchases so Stripe's dashboard
+  // groups payments per customer (simpler support, single payment-method file).
+  let customerId = args.user.stripe_customer_id;
+  if (!customerId) {
+    const customer = await stripe.customers.create({
+      email: args.user.email,
+      metadata: { userId: args.user.id },
+    });
+    customerId = customer.id;
+  }
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    customer,
-    customer_email: customerEmail,
-    success_url: args.successUrl,
-    cancel_url: args.cancelUrl,
-    line_items: [
-      {
-        quantity: 1,
-        price_data: {
-          currency: args.package.currency,
-          unit_amount: args.package.price_cents,
-          product_data: {
-            name: args.package.name,
-            description: `${args.package.credits} Lens credit${args.package.credits === 1 ? '' : 's'}`,
-          },
-        },
-      },
-    ],
+  const intent = await stripe.paymentIntents.create({
+    amount: args.package.price_cents,
+    currency: args.package.currency,
+    customer: customerId,
+    description: `${args.package.name} — ${args.package.credits} Lens credit${
+      args.package.credits === 1 ? '' : 's'
+    }`,
+    automatic_payment_methods: { enabled: true },
     metadata: {
       userId: args.user.id,
       packageId: args.package.id,
       credits: String(args.package.credits),
     },
-    payment_intent_data: {
-      metadata: {
-        userId: args.user.id,
-        packageId: args.package.id,
-        credits: String(args.package.credits),
-      },
-    },
   });
 
-  if (!session.url) throw new Error('Stripe did not return a checkout URL');
+  if (!intent.client_secret) {
+    throw new Error('Stripe did not return a client_secret for the PaymentIntent');
+  }
+
   return {
-    sessionId: session.id,
-    url: session.url,
-    customerId: typeof session.customer === 'string' ? session.customer : null,
+    paymentIntentId: intent.id,
+    clientSecret: intent.client_secret,
+    customerId,
+    amount: intent.amount,
+    currency: intent.currency,
   };
 }
 

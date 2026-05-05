@@ -113,7 +113,7 @@ export type Payment = {
   credits_delta: number;
   amount_cents: number | null;
   currency: string | null;
-  stripe_session_id: string | null;
+  stripe_payment_intent_id: string | null;
   admin_user_id: string | null;
   note: string | null;
   created_at: string;

@@ -1,13 +1,14 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Coins, Loader2 } from 'lucide-react';
 import { api } from '../../../lib/api';
 import { useUserProfile } from '../../../lib/useUserProfile';
 import type { CreditPackage } from '../../../lib/types';
 
 function BillingPageInner() {
+  const router = useRouter();
   const search = useSearchParams();
   const reason = search.get('reason');
   const canceled = search.get('canceled') === '1';
@@ -29,15 +30,9 @@ function BillingPageInner() {
     };
   }, []);
 
-  async function buy(pkg: CreditPackage) {
+  function buy(pkg: CreditPackage) {
     setBusy(pkg.id);
-    try {
-      const { url } = await api.createCheckout(pkg.id);
-      window.location.href = url;
-    } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
-      setBusy(null);
-    }
+    router.push(`/billing/checkout?pkg=${encodeURIComponent(pkg.id)}`);
   }
 
   return (
@@ -111,7 +106,7 @@ function BillingPageInner() {
               >
                 {busy === pkg.id ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Redirecting…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                   </>
                 ) : (
                   'Buy'

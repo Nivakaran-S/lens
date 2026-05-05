@@ -79,9 +79,16 @@ export const api = {
   // Public credit packages (any signed-in user can list active ones)
   packages: () => request<{ packages: CreditPackage[] }>('/api/packages'),
 
-  // Stripe checkout
-  createCheckout: (packageId: string) =>
-    request<{ url: string }>('/api/checkout', {
+  // Stripe — embedded checkout via PaymentIntent. The clientSecret is
+  // consumed by Stripe Elements on /billing/checkout to render the form.
+  createPaymentIntent: (packageId: string) =>
+    request<{
+      clientSecret: string;
+      paymentIntentId: string;
+      amount: number;
+      currency: string;
+      package: { id: string; name: string; credits: number; price_cents: number; currency: string };
+    }>('/api/payment-intent', {
       method: 'POST',
       body: JSON.stringify({ packageId }),
     }),

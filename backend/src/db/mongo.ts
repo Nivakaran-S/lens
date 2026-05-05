@@ -82,7 +82,10 @@ export type PaymentDoc = {
   credits_delta: number; // signed: +N for grants/purchases, -N for deductions if you ever log them
   amount_cents: number | null; // null for non-cash sources
   currency: string | null;
-  stripe_session_id: string | null; // unique sparse — ensures webhook idempotency
+  // Unique partial index — guarantees webhook idempotency. We embed payments
+  // in our own page via Stripe Elements / PaymentIntent, so this is the
+  // intent id (pi_…), not a Checkout Session id.
+  stripe_payment_intent_id: string | null;
   admin_user_id: string | null; // when source='admin_grant'
   note: string | null;
   created_at: string;
@@ -162,34 +165,38 @@ export async function paymentsCollection(): Promise<Collection<WithMongoId<Payme
   return (await mongo()).collection<WithMongoId<PaymentDoc>>('payments');
 }
 
-// Webhook idempotency on stripe_session_id needs a unique index, but the
-// field is null on most rows (admin grants, signup bonuses, etc.). A plain
-// `sparse: true` index treats null as a value and collides on the second
-// null insert, so we use a partial filter index that only applies when the
-// field is actually a string. An older deploy may have created the broken
-// sparse index; drop it before recreating with the correct options since
-// Mongo cannot change index options in place.
-async function ensureStripeSessionIndex(
+// Webhook idempotency lives on stripe_payment_intent_id. The field is null
+// on most rows (admin grants, signup bonuses, refunds, analysis charges) so
+// we use a partial filter index that only enforces uniqueness when the
+// field is actually a string. Sparse-unique would collide on the second
+// null insert.
+//
+// Drops two flavours of legacy index from earlier iterations:
+//  - `stripe_session_id_1` (Checkout-Session era, before embedded Elements)
+//  - any `stripe_payment_intent_id_1` without a partialFilterExpression
+async function ensurePaymentsIdempotencyIndex(
   payments: Collection<WithMongoId<PaymentDoc>>,
 ): Promise<void> {
   const existing = await payments.indexes();
-  const broken = existing.find(
-    (i) =>
-      i.key &&
-      Object.keys(i.key).length === 1 &&
-      i.key.stripe_session_id === 1 &&
-      // missing or undefined partialFilterExpression means it's the old sparse index
-      !i.partialFilterExpression,
-  );
-  if (broken && broken.name) {
-    log.info(`ensureStripeSessionIndex: dropping legacy index ${broken.name}`);
-    await payments.dropIndex(broken.name);
+  const legacyKeys = ['stripe_session_id', 'stripe_payment_intent_id'];
+  for (const field of legacyKeys) {
+    const broken = existing.find(
+      (i) =>
+        i.key &&
+        Object.keys(i.key).length === 1 &&
+        i.key[field] === 1 &&
+        !i.partialFilterExpression,
+    );
+    if (broken && broken.name) {
+      log.info(`ensurePaymentsIdempotencyIndex: dropping legacy index ${broken.name}`);
+      await payments.dropIndex(broken.name);
+    }
   }
   await payments.createIndex(
-    { stripe_session_id: 1 },
+    { stripe_payment_intent_id: 1 },
     {
       unique: true,
-      partialFilterExpression: { stripe_session_id: { $type: 'string' } },
+      partialFilterExpression: { stripe_payment_intent_id: { $type: 'string' } },
     },
   );
 }
@@ -216,7 +223,7 @@ export async function ensureIndexes(): Promise<void> {
       packages.createIndex({ id: 1 }, { unique: true }),
       packages.createIndex({ active: 1, created_at: -1 }),
       payments.createIndex({ user_id: 1, created_at: -1 }),
-      ensureStripeSessionIndex(payments),
+      ensurePaymentsIdempotencyIndex(payments),
     ]);
     log.info(`ensureIndexes: done in ${Date.now() - t0}ms`);
   } catch (err) {
