@@ -3,6 +3,9 @@ import { gemini, MODELS } from './client.js';
 import type { GeminiFileRef } from './file-store.js';
 import type { Report } from '../domain/risk-rules.js';
 import type { DocType } from '../domain/doc-types.js';
+import { logger } from '../util/log.js';
+
+const log = logger('analyseAll');
 
 /**
  * One-shot pack analysis. Sends all PDFs to Gemini 2.5 Pro in a single call
@@ -112,7 +115,7 @@ contents_list: listed_documents[]
 other: summary
 
 Rules:
-- Quote verbatim text where a schema asks for it (covenants, restrictions). Do not paraphrase.
+- Quote verbatim text where a schema asks for it (covenants, restrictions). Do not paraphrase. BUT keep length bounded so the output fits in the response budget — see length caps below.
 - For UK addresses, normalise spacing in postcodes (e.g. "NG19 6HN").
 - For dates, prefer ISO 8601 (YYYY-MM-DD); if only a year is shown, output "YYYY".
 - For monetary values, output the number in GBP (e.g. 1500, not "£1,500").
@@ -124,11 +127,131 @@ Rules:
 - If a fact is unknown, OMIT the field rather than inventing a value.
 - Cross-check: probate sales — verify executor names match the registered proprietor of the title.
 - Cross-check: EPC address vs title address.
-- Output JSON only.`;
+
+Output budget — these limits exist so the JSON fits in the response token cap; exceeding them silently truncates the response and FAILS the analysis. Stay strictly within them:
+- Each "quote" field (in risks[].evidence[]): max 250 characters of the verbatim source text. Truncate the prefix; do not paraphrase or summarise.
+- Each "text" field on covenants, easements, proprietorship_restrictions, and historic_conveyance.notable_covenants_imposed: max 400 characters of verbatim text. Truncate; do not paraphrase.
+- Each "summary" field: max 200 characters.
+- Each "explanation" on risks[]: max 500 characters.
+- risks[]: maximum 25 entries. If more than 25 issues exist, keep the highest-severity ones and merge similar items.
+- restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[], s106_obligations[], indemnity_insurance_required[], notable_conditions[], guarantees_provided[], alterations_done[], building_regs_provided[], planning_consents_provided[], ground_stability_concerns[], nearby_industrial_or_landfill_sites[], notable_observations[]: maximum 15 entries each. If more exist, keep the most material and add a final entry whose summary reads "[+N more not shown]".
+- headline_findings: 3–5 entries (no more), each "finding" max 220 characters.
+- buyer_questions_for_solicitor: 5–10 entries, each max 200 characters.
+- Omit any field whose value would be an empty string, empty array, or null. Output JSON only — no leading or trailing whitespace beyond a single newline at most.`;
+
+// Extra rules appended to the system instruction when we retry in compact
+// mode after a truncated first attempt. These OVERRIDE the base-prompt
+// length budget with stricter caps so the second attempt definitely fits.
+// Schema and field set are unchanged — only string lengths get tighter.
+const COMPACT_SUFFIX = `
+
+Compact-mode overrides (this run only — these REPLACE the base output budget):
+- "quote" fields: max 120 characters (was 250).
+- "text" fields on covenants/easements/restrictions/conveyances: max 200 characters (was 400).
+- "explanation" on risks[]: max 300 characters (was 500).
+- "summary" fields: max 120 characters (was 200).
+- risks[]: max 15 entries (was 25). Keep the highest-severity ones and merge similar items.
+- restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[]: max 8 entries each (was 15). Use a final "[+N more not shown]" summary entry if more exist.
+- headline_findings[]: produce exactly 3 entries (not 5). Each "finding" max 180 characters.
+- buyer_questions_for_solicitor: max 6 entries (was 10), each max 160 characters.
+- Truncate prefixes; never paraphrase. Omit any field whose value is empty/null/[]. Schema and required keys unchanged.`;
+
+type AttemptOutcome =
+  | { ok: true; result: AnalyseAllResult }
+  | { ok: false; truncated: boolean; reason: string; length: number; tail: string };
+
+async function attempt(parts: Part[], compact: boolean): Promise<AttemptOutcome> {
+  const ai = gemini();
+  const response = await ai.models.generateContent({
+    model: MODELS.synthesize,
+    contents: [{ role: 'user', parts }],
+    config: {
+      systemInstruction: compact
+        ? SYSTEM_INSTRUCTION + COMPACT_SUFFIX
+        : SYSTEM_INSTRUCTION,
+      responseMimeType: 'application/json',
+      temperature: 0,
+      // gemini-2.5-flash supports up to 65,536 output tokens. 64k gives
+      // headroom for verbatim covenant quotes; compact retry trims further.
+      maxOutputTokens: 64_000,
+    },
+  });
+
+  const text = response.text ?? '';
+  const finishReason = response.candidates?.[0]?.finishReason ?? 'UNKNOWN';
+
+  if (!text) {
+    return {
+      ok: false,
+      truncated: false,
+      reason: `empty response (finishReason=${finishReason})`,
+      length: 0,
+      tail: '',
+    };
+  }
+
+  // Gemini truncates output silently when it hits maxOutputTokens — the
+  // result is well-formed prefix + cut-off tail. Detect this BEFORE the
+  // JSON.parse step so the retry path can fire on the real cause.
+  if (finishReason === 'MAX_TOKENS') {
+    return {
+      ok: false,
+      truncated: true,
+      reason: `truncated by MAX_TOKENS at length=${text.length}`,
+      length: text.length,
+      tail: text.slice(-200).replace(/\s+/g, ' '),
+    };
+  }
+
+  let parsed: AnalyseAllResult;
+  try {
+    parsed = JSON.parse(text) as AnalyseAllResult;
+  } catch (err) {
+    return {
+      ok: false,
+      // Treat parse failure with non-STOP finish reasons as a truncation
+      // candidate too — Gemini occasionally returns OTHER/SAFETY mid-stream.
+      truncated: finishReason !== 'STOP',
+      reason: `JSON.parse failed (finishReason=${finishReason}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      length: text.length,
+      tail: text.slice(-200).replace(/\s+/g, ' '),
+    };
+  }
+
+  if (!Array.isArray(parsed.documents)) {
+    return {
+      ok: false,
+      truncated: false,
+      reason: 'response missing documents[]',
+      length: text.length,
+      tail: text.slice(-200).replace(/\s+/g, ' '),
+    };
+  }
+
+  if (!parsed.report && (parsed as unknown as Record<string, unknown>).property_summary) {
+    // Some calls return flat shape (synthesis fields at top level instead of
+    // under `report`). Lift them into the expected shape.
+    const r = parsed as unknown as Record<string, unknown>;
+    parsed = {
+      documents: parsed.documents,
+      report: {
+        property_summary: r.property_summary as Report['property_summary'],
+        overall_risk: (r.overall_risk as Report['overall_risk']) ?? 'low',
+        headline_findings: (r.headline_findings as Report['headline_findings']) ?? [],
+        risks: (r.risks as Report['risks']) ?? [],
+        cross_document_consistency:
+          (r.cross_document_consistency as Report['cross_document_consistency']) ?? {},
+        buyer_questions_for_solicitor: (r.buyer_questions_for_solicitor as string[]) ?? [],
+      },
+    };
+  }
+
+  return { ok: true, result: parsed };
+}
 
 export async function analyseAll(docs: DocInput[]): Promise<AnalyseAllResult> {
-  const ai = gemini();
-
   const filenameList = docs.map((d, i) => `  ${i + 1}. ${d.filename}`).join('\n');
 
   const parts: Part[] = [
@@ -138,66 +261,28 @@ export async function analyseAll(docs: DocInput[]): Promise<AnalyseAllResult> {
     ...docs.map((d) => createPartFromUri(d.file.uri, d.file.mimeType)),
   ];
 
-  const response = await ai.models.generateContent({
-    model: MODELS.synthesize,
-    contents: [{ role: 'user', parts }],
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      responseMimeType: 'application/json',
-      temperature: 0,
-      // gemini-2.5-flash supports up to 65,536 output tokens. Bigger packs
-      // (10+ PDFs with verbatim covenant quotes) used to truncate at 32k
-      // and produce unparseable JSON. 64k gives comfortable headroom.
-      maxOutputTokens: 64_000,
-    },
-  });
+  // First attempt: normal mode. If Gemini truncated output (MAX_TOKENS or a
+  // mid-stream JSON parse failure) we retry once in compact mode, which caps
+  // verbatim quote lengths so the response fits comfortably under the token
+  // ceiling. Both attempts use the same files — no extra upload cost.
+  const first = await attempt(parts, false);
+  if (first.ok) return first.result;
 
-  const text = response.text;
-  const finishReason = response.candidates?.[0]?.finishReason;
-
-  if (!text) throw new Error('Empty analyseAll response');
-
-  // Gemini truncates output silently when it hits maxOutputTokens — the
-  // result is well-formed prefix + garbled tail. Detect this BEFORE the
-  // JSON.parse error so the operator sees the real cause.
-  if (finishReason === 'MAX_TOKENS') {
+  if (first.truncated) {
+    log.warn(
+      `first attempt failed (${first.reason}); retrying in compact mode. tail=…${first.tail}`,
+    );
+    const second = await attempt(parts, true);
+    if (second.ok) {
+      log.info('compact-mode retry succeeded');
+      return second.result;
+    }
     throw new Error(
-      `analyseAll response truncated by Gemini (finishReason=MAX_TOKENS, length=${text.length}). ` +
-        `Pack is too large for one shot. Retry once; if it persists, raise maxOutputTokens or trim the pack.`,
+      `analyseAll failed after compact-mode retry. ` +
+        `First: ${first.reason}. Second: ${second.reason}. Tail: …${second.tail}`,
     );
   }
 
-  let parsed: AnalyseAllResult;
-  try {
-    parsed = JSON.parse(text) as AnalyseAllResult;
-  } catch (err) {
-    const tail = text.slice(-200).replace(/\s+/g, ' ');
-    throw new Error(
-      `Failed to parse analyseAll JSON (length=${text.length}, finishReason=${finishReason ?? 'unknown'}): ` +
-        `${err instanceof Error ? err.message : String(err)}. Tail: …${tail}`,
-    );
-  }
-
-  if (!Array.isArray(parsed.documents)) {
-    throw new Error('analyseAll response missing documents[]');
-  }
-  if (!parsed.report && (parsed as unknown as Record<string, unknown>).property_summary) {
-    // Some calls may produce flat-shape (synthesis fields at top level instead of under `report`).
-    // Lift them into the expected shape.
-    const r = parsed as unknown as Record<string, unknown>;
-    parsed = {
-      documents: parsed.documents,
-      report: {
-        property_summary: r.property_summary as Report['property_summary'],
-        overall_risk: (r.overall_risk as Report['overall_risk']) ?? 'low',
-        headline_findings: (r.headline_findings as string[]) ?? [],
-        risks: (r.risks as Report['risks']) ?? [],
-        cross_document_consistency:
-          (r.cross_document_consistency as Report['cross_document_consistency']) ?? {},
-        buyer_questions_for_solicitor: (r.buyer_questions_for_solicitor as string[]) ?? [],
-      },
-    };
-  }
-
-  return parsed;
+  // Non-truncation failures (empty body, bad shape) — surface as-is.
+  throw new Error(`analyseAll failed: ${first.reason}. Tail: …${first.tail}`);
 }
