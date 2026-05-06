@@ -139,25 +139,42 @@ export async function analyseAll(docs: DocInput[]): Promise<AnalyseAllResult> {
   ];
 
   const response = await ai.models.generateContent({
-    model: MODELS.synthesize, // gemini-2.5-pro
+    model: MODELS.synthesize,
     contents: [{ role: 'user', parts }],
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,
       responseMimeType: 'application/json',
       temperature: 0,
-      maxOutputTokens: 32_000,
+      // gemini-2.5-flash supports up to 65,536 output tokens. Bigger packs
+      // (10+ PDFs with verbatim covenant quotes) used to truncate at 32k
+      // and produce unparseable JSON. 64k gives comfortable headroom.
+      maxOutputTokens: 64_000,
     },
   });
 
   const text = response.text;
+  const finishReason = response.candidates?.[0]?.finishReason;
+
   if (!text) throw new Error('Empty analyseAll response');
+
+  // Gemini truncates output silently when it hits maxOutputTokens — the
+  // result is well-formed prefix + garbled tail. Detect this BEFORE the
+  // JSON.parse error so the operator sees the real cause.
+  if (finishReason === 'MAX_TOKENS') {
+    throw new Error(
+      `analyseAll response truncated by Gemini (finishReason=MAX_TOKENS, length=${text.length}). ` +
+        `Pack is too large for one shot. Retry once; if it persists, raise maxOutputTokens or trim the pack.`,
+    );
+  }
 
   let parsed: AnalyseAllResult;
   try {
     parsed = JSON.parse(text) as AnalyseAllResult;
   } catch (err) {
+    const tail = text.slice(-200).replace(/\s+/g, ' ');
     throw new Error(
-      `Failed to parse analyseAll JSON (length=${text.length}): ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to parse analyseAll JSON (length=${text.length}, finishReason=${finishReason ?? 'unknown'}): ` +
+        `${err instanceof Error ? err.message : String(err)}. Tail: …${tail}`,
     );
   }
 
