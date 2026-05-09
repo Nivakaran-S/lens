@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 import { addCredits } from '../db/users.js';
 import { getPackage } from '../db/packages.js';
 import { paymentForIntent } from '../db/payments.js';
+import { isUniqueViolation } from '../db/client.js';
 import { verifyWebhook } from '../payments/stripe.js';
 import { logger as fallbackLogger, type Logger } from '../util/log.js';
 
@@ -102,8 +103,8 @@ stripeRoute.post('/webhook', async (c) => {
   } catch (err) {
     // Concurrent webhook retry won the race — another insert with the
     // same payment_intent_id already happened. Treat as success.
-    if (err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 11000) {
-      log.info(`webhook: race lost (E11000) — already credited; skipping`);
+    if (isUniqueViolation(err, 'payments_stripe_intent_unique')) {
+      log.info(`webhook: race lost (23505) — already credited; skipping`);
       return c.json({ received: true, idempotent: true });
     }
     log.error('webhook: failed to credit user', {

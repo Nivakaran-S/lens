@@ -7,15 +7,20 @@ const schema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   SUPABASE_JWT_AUD: z.string().default('authenticated'),
 
-  // MongoDB
-  MONGODB_URL: z.string().min(1),
-  MONGODB_DB_NAME: z.string().default('lens'),
+  // PostgreSQL (Plesk-managed, localhost:5432) — replaces MongoDB Atlas
+  DATABASE_URL: z.string().url(),
 
-  // Cloudflare R2 (S3-compatible)
-  R2_ACCOUNT_ID: z.string().min(1),
-  R2_ACCESS_KEY_ID: z.string().min(1),
-  R2_SECRET_ACCESS_KEY: z.string().min(1),
-  R2_BUCKET: z.string().default('lens-packs'),
+  // Local filesystem storage — replaces Cloudflare R2.
+  // Files live at {UPLOAD_DIR}/{userId}/{jobId}/{filename} and
+  // {UPLOAD_DIR}/{userId}/{jobId}/docs/{idx}-{filename}.pdf
+  UPLOAD_DIR: z.string().min(1),
+  // HMAC secret for signing short-lived download URLs. Generate with
+  // `openssl rand -hex 32`. Never expose to the client.
+  FILE_SIGN_SECRET: z.string().min(32),
+  FILE_SIGN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  // Public origin used to compose absolute download URLs (the worker has
+  // no request context to derive this from). e.g. https://api.example.com
+  PUBLIC_API_URL: z.string().url(),
 
   // Gemini
   GEMINI_API_KEY: z.string().min(1).optional(),
@@ -39,7 +44,7 @@ const schema = z.object({
     .default('1')
     .transform((s) => Math.max(0, parseInt(s, 10) || 1)),
 
-  // Frontend URL — used for Stripe success/cancel redirects.
+  // Frontend URL — used for Stripe success/cancel redirects (legacy).
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
 
   // CORS
@@ -66,16 +71,15 @@ export function env(): Env {
 const REQUIRED_KEYS = [
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
-  'MONGODB_URL',
-  'R2_ACCOUNT_ID',
-  'R2_ACCESS_KEY_ID',
-  'R2_SECRET_ACCESS_KEY',
+  'DATABASE_URL',
+  'UPLOAD_DIR',
+  'FILE_SIGN_SECRET',
+  'PUBLIC_API_URL',
 ] as const;
 const OPTIONAL_KEYS = [
   'SUPABASE_JWT_SECRET',
   'SUPABASE_JWT_AUD',
-  'MONGODB_DB_NAME',
-  'R2_BUCKET',
+  'FILE_SIGN_TTL_SECONDS',
   'GEMINI_API_KEY',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',

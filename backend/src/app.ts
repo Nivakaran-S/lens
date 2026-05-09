@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
 import { adminRoute } from './routes/admin.js';
 import { checkoutRoute } from './routes/checkout.js';
+import { filesRoute } from './routes/files.js';
 import { jobsRoute } from './routes/jobs.js';
 import { meRoute } from './routes/me.js';
 import { packagesRoute } from './routes/packages.js';
@@ -41,11 +42,10 @@ app.get('/api/diag', (c) => {
   });
 });
 
-/** Probe upstream services with per-call timing — Mongo + R2. */
+/** Probe upstream services with per-call timing — Postgres + uploads disk. */
 app.get('/api/diag/services', async (c) => {
-  const { mongo } = await import('./db/mongo.js');
-  const { presignUpload } = await import('./storage/r2.js');
-  const { GetObjectCommand, HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
+  const { ping } = await import('./db/client.js');
+  const { promises: fsp, constants: fsConst } = await import('node:fs');
   const { env } = await import('./env.js');
 
   async function timed<T>(label: string, fn: () => Promise<T>) {
@@ -64,57 +64,34 @@ app.get('/api/diag/services', async (c) => {
   }
 
   const e = env();
-  const r2 = new S3Client({
-    region: 'auto',
-    endpoint: `https://${e.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: e.R2_ACCESS_KEY_ID,
-      secretAccessKey: e.R2_SECRET_ACCESS_KEY,
-    },
-  });
 
   const results = [
-    await timed('mongo_ping', async () => {
-      const db = await mongo();
-      await db.command({ ping: 1 });
+    await timed('pg_ping', async () => {
+      await ping();
     }),
-    await timed('mongo_jobs_count', async () => {
-      const db = await mongo();
-      await db.collection('jobs').countDocuments({}, { limit: 1 });
+    await timed('uploads_dir_writable', async () => {
+      await fsp.access(e.UPLOAD_DIR, fsConst.R_OK | fsConst.W_OK);
     }),
-    await timed('r2_presign_upload', async () => {
-      await presignUpload(`_diag/${Date.now()}.zip`, 'application/zip');
-    }),
-    // This one ACTUALLY exercises the credentials by talking to R2.
-    // Wrong key → 'InvalidAccessKeyId' or 'SignatureDoesNotMatch'.
-    // Wrong bucket → 'NoSuchBucket'.
-    // Right key + wrong region → 'Forbidden'.
-    await timed('r2_head_bucket', async () => {
-      await r2.send(new HeadBucketCommand({ Bucket: e.R2_BUCKET }));
-    }),
-    // Probe a known-missing object — expect NoSuchKey on success path.
-    await timed('r2_get_missing_object', async () => {
-      try {
-        await r2.send(
-          new GetObjectCommand({
-            Bucket: e.R2_BUCKET,
-            Key: `_diag/does-not-exist-${Date.now()}.zip`,
-          }),
-        );
-      } catch (err) {
-        // NoSuchKey here is the expected, healthy response.
-        const name = err instanceof Error ? err.name : '';
-        if (name === 'NoSuchKey') return; // success — credentials worked, key just doesn't exist
-        throw err;
-      }
+    await timed('uploads_disk_free', async () => {
+      // statfs is Node 18+. Returns block info; compute free bytes.
+      const statfs = (fsp as unknown as {
+        statfs?: (p: string) => Promise<{ bsize: number; bavail: number; blocks: number }>;
+      }).statfs;
+      if (!statfs) return { note: 'fs.promises.statfs unavailable on this Node version' };
+      const s = await statfs(e.UPLOAD_DIR);
+      const freeBytes = s.bsize * s.bavail;
+      const totalBytes = s.bsize * s.blocks;
+      return {
+        free_bytes: freeBytes,
+        total_bytes: totalBytes,
+        free_pct: totalBytes > 0 ? Math.round((freeBytes / totalBytes) * 100) : null,
+      };
     }),
   ];
 
   return c.json({
     service: 'lens-api',
-    bucket: e.R2_BUCKET,
-    accessKeyIdPrefix: e.R2_ACCESS_KEY_ID.slice(0, 6) + '…',
-    accessKeyIdLength: e.R2_ACCESS_KEY_ID.length,
+    upload_dir: e.UPLOAD_DIR,
     results,
     ts: new Date().toISOString(),
   });
@@ -132,6 +109,9 @@ app.route('/api/jobs', jobsRoute);
 app.route('/api/packages', packagesRoute);
 app.route('/api/payment-intent', checkoutRoute);
 app.route('/api/admin', adminRoute);
+// Signed-download endpoint — auth is the HMAC signature, not a JWT.
+// Mount LAST so other routes match first.
+app.route('/api/files', filesRoute);
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) {

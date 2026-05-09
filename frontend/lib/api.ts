@@ -68,6 +68,45 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ filename, sizeBytes }),
     }),
+  /**
+   * Upload the ZIP for a job. Uses XMLHttpRequest so we get upload-progress
+   * events — fetch() doesn't expose them on Safari/Firefox. The endpoint
+   * is `${API_BASE}/api/jobs/<id>/upload`; back-end accepts either
+   * multipart/form-data with field "file", or raw application/zip body.
+   */
+  uploadJobFile: (jobId: string, file: File, onProgress?: (pct: number) => void) =>
+    new Promise<void>((resolve, reject) => {
+      (async () => {
+        const headers = await authHeaders();
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${PUBLIC_ENV.API_BASE_URL}/api/jobs/${jobId}/upload`);
+        for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) {
+            onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            let message = xhr.statusText || `HTTP ${xhr.status}`;
+            try {
+              const parsed = JSON.parse(xhr.responseText) as { error?: string };
+              if (parsed.error) message = parsed.error;
+            } catch {
+              if (xhr.responseText) message = xhr.responseText;
+            }
+            reject(new ApiError(xhr.status, xhr.responseText, `API ${xhr.status}: ${message}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.onabort = () => reject(new Error('Upload aborted'));
+        const fd = new FormData();
+        fd.append('file', file);
+        xhr.send(fd);
+      })().catch(reject);
+    }),
   startJob: (jobId: string) =>
     request<{ jobId: string; status: string }>(`/api/jobs/${jobId}/start`, { method: 'POST' }),
   getJob: (jobId: string) => request<JobDetail>(`/api/jobs/${jobId}`),

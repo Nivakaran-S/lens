@@ -1,7 +1,6 @@
 import Stripe from 'stripe';
 import { env } from '../env.js';
-import type { CreditPackageDoc } from '../db/mongo.js';
-import type { UserDoc } from '../db/mongo.js';
+import type { CreditPackageDoc, UserDoc } from '../db/schema.js';
 
 let cached: Stripe | null = null;
 

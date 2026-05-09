@@ -1,6 +1,6 @@
 import { FILE_REFRESH_AGE_MS, gemini } from './client.js';
 import { updateDocument } from '../db/jobs.js';
-import { getObjectBuffer } from '../storage/r2.js';
+import { getObjectBuffer } from '../storage/fs.js';
 import type { DocumentRow } from '../db/jobs.js';
 
 export type GeminiFileRef = { uri: string; mimeType: string };

@@ -36,16 +36,8 @@ export default function UploadPage() {
         const created = await api.createJob(file.name, file.size);
 
         setStage('uploading');
-        // PUT directly to the R2 presigned URL — no SDK, no auth header (the
-        // URL itself encodes the signature).
-        const putRes = await fetch(created.uploadUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/zip' },
-          body: file,
-        });
-        if (!putRes.ok) {
-          throw new Error(`Upload failed (${putRes.status} ${putRes.statusText})`);
-        }
+        // POST multipart to our backend. uploadJobFile handles auth + progress.
+        await api.uploadJobFile(created.jobId, file, setProgress);
         setProgress(100);
 
         setStage('starting');

@@ -1,36 +1,32 @@
 import { randomUUID } from 'node:crypto';
-import { ensureIndexes, packagesCollection, type CreditPackageDoc } from './mongo.js';
+import { asc, desc, eq } from 'drizzle-orm';
+import { db } from './client.js';
+import { credit_packages, type CreditPackageDoc } from './schema.js';
 import { env } from '../env.js';
 
 const now = () => new Date().toISOString();
 
-function strip(doc: CreditPackageDoc | null): CreditPackageDoc | null {
-  if (!doc) return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const copy = { ...(doc as any) };
-  delete copy._id;
-  return copy as CreditPackageDoc;
-}
+export type { CreditPackageDoc };
 
 export async function getPackage(id: string): Promise<CreditPackageDoc | null> {
-  const c = await packagesCollection();
-  return strip(await c.findOne({ id }));
+  const rows = await db()
+    .select()
+    .from(credit_packages)
+    .where(eq(credit_packages.id, id))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 export async function listActivePackages(): Promise<CreditPackageDoc[]> {
-  const c = await packagesCollection();
-  const cursor = c.find({ active: true }).sort({ price_cents: 1 });
-  const out: CreditPackageDoc[] = [];
-  for await (const p of cursor) out.push(strip(p as CreditPackageDoc) as CreditPackageDoc);
-  return out;
+  return db()
+    .select()
+    .from(credit_packages)
+    .where(eq(credit_packages.active, true))
+    .orderBy(asc(credit_packages.price_cents));
 }
 
 export async function listAllPackages(): Promise<CreditPackageDoc[]> {
-  const c = await packagesCollection();
-  const cursor = c.find({}).sort({ created_at: -1 });
-  const out: CreditPackageDoc[] = [];
-  for await (const p of cursor) out.push(strip(p as CreditPackageDoc) as CreditPackageDoc);
-  return out;
+  return db().select().from(credit_packages).orderBy(desc(credit_packages.created_at));
 }
 
 export type PackageInsert = {
@@ -43,22 +39,19 @@ export type PackageInsert = {
 };
 
 export async function createPackage(values: PackageInsert): Promise<CreditPackageDoc> {
-  const c = await packagesCollection();
-  await ensureIndexes();
   const id = values.id ?? randomUUID();
-  const ts = now();
-  const doc: CreditPackageDoc = {
-    id,
-    name: values.name,
-    credits: values.credits,
-    price_cents: values.price_cents,
-    currency: (values.currency ?? env().STRIPE_CURRENCY).toLowerCase(),
-    active: values.active ?? true,
-    created_at: ts,
-    updated_at: ts,
-  };
-  await c.insertOne(doc);
-  return doc;
+  const inserted = await db()
+    .insert(credit_packages)
+    .values({
+      id,
+      name: values.name,
+      credits: values.credits,
+      price_cents: values.price_cents,
+      currency: (values.currency ?? env().STRIPE_CURRENCY).toLowerCase(),
+      active: values.active ?? true,
+    })
+    .returning();
+  return inserted[0]!;
 }
 
 export type PackageUpdate = Partial<{
@@ -69,18 +62,26 @@ export type PackageUpdate = Partial<{
   active: boolean;
 }>;
 
-export async function updatePackage(id: string, values: PackageUpdate): Promise<CreditPackageDoc | null> {
-  const c = await packagesCollection();
-  const $set: Record<string, unknown> = { ...values, updated_at: now() };
+export async function updatePackage(
+  id: string,
+  values: PackageUpdate,
+): Promise<CreditPackageDoc | null> {
+  const set: Record<string, unknown> = { ...values, updated_at: now() };
   if (typeof values.currency === 'string') {
-    $set.currency = values.currency.toLowerCase();
+    set.currency = values.currency.toLowerCase();
   }
-  const result = await c.findOneAndUpdate({ id }, { $set }, { returnDocument: 'after' });
-  return strip(result as CreditPackageDoc | null);
+  const updated = await db()
+    .update(credit_packages)
+    .set(set)
+    .where(eq(credit_packages.id, id))
+    .returning();
+  return updated[0] ?? null;
 }
 
-/** Soft-delete: just flip active=false so historical purchase records still resolve. */
+/** Soft-delete: flip active=false so historical purchase records still resolve. */
 export async function deactivatePackage(id: string): Promise<void> {
-  const c = await packagesCollection();
-  await c.updateOne({ id }, { $set: { active: false, updated_at: now() } });
+  await db()
+    .update(credit_packages)
+    .set({ active: false, updated_at: now() })
+    .where(eq(credit_packages.id, id));
 }

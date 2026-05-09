@@ -11,7 +11,7 @@ import type { DocType } from '../domain/doc-types.js';
 import { env } from '../env.js';
 import { analyseAll, type DocInput } from '../gemini/analyseAll.js';
 import { ensureFreshGeminiFile } from '../gemini/file-store.js';
-import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/r2.js';
+import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/fs.js';
 import { logger as fallbackLogger, type Logger } from '../util/log.js';
 import { extractPdfsFromZip } from '../zip/extract.js';
 

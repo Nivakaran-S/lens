@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { asc, desc, eq } from 'drizzle-orm';
+import { db } from './client.js';
 import {
-  documentsCollection,
-  ensureIndexes,
-  jobsCollection,
+  documents,
+  jobs,
   type DocumentDoc,
   type JobDoc,
   type JobStatus,
-} from './mongo.js';
+} from './schema.js';
 
 export type { DocumentDoc as DocumentRow, JobDoc as JobRow, JobStatus };
 
@@ -31,68 +32,53 @@ type JobUpdate = Partial<{
   error: string | null;
 }>;
 
-function stripId<T extends object>(doc: T | null): T | null {
-  if (!doc) return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const copy = { ...(doc as any) };
-  delete copy._id;
-  return copy as T;
-}
-
 export async function insertJob(values: JobInsert): Promise<JobDoc> {
-  const jobs = await jobsCollection();
-  await ensureIndexes();
   const id = values.id ?? randomUUID();
-  const ts = now();
-  const doc: JobDoc = {
-    id,
-    user_id: values.user_id,
-    zip_storage_key: values.zip_storage_key,
-    zip_filename: values.zip_filename,
-    zip_size_bytes: values.zip_size_bytes ?? null,
-    property_label: values.property_label ?? null,
-    status: values.status ?? 'queued',
-    status_detail: null,
-    report: null,
-    error: null,
-    created_at: ts,
-    updated_at: ts,
-  };
-  await jobs.insertOne(doc);
-  return doc;
+  const inserted = await db()
+    .insert(jobs)
+    .values({
+      id,
+      user_id: values.user_id,
+      zip_storage_key: values.zip_storage_key,
+      zip_filename: values.zip_filename,
+      zip_size_bytes: values.zip_size_bytes ?? null,
+      property_label: values.property_label ?? null,
+      status: values.status ?? 'queued',
+      status_detail: null,
+      report: null,
+      error: null,
+    })
+    .returning();
+  return inserted[0]!;
 }
 
 export async function updateJob(id: string, values: JobUpdate): Promise<void> {
-  const jobs = await jobsCollection();
-  const $set: Record<string, unknown> = { ...values, updated_at: now() };
-  await jobs.updateOne({ id }, { $set });
+  await db()
+    .update(jobs)
+    .set({ ...values, updated_at: now() })
+    .where(eq(jobs.id, id));
 }
 
 export async function getJob(id: string): Promise<JobDoc | null> {
-  const jobs = await jobsCollection();
-  const doc = await jobs.findOne({ id });
-  return stripId(doc) as JobDoc | null;
+  const rows = await db().select().from(jobs).where(eq(jobs.id, id)).limit(1);
+  return rows[0] ?? null;
 }
 
 export async function listJobsForUser(userId: string, limit = 50): Promise<JobDoc[]> {
-  const jobs = await jobsCollection();
-  const cursor = jobs
-    .find({ user_id: userId })
-    .sort({ created_at: -1 })
+  return db()
+    .select()
+    .from(jobs)
+    .where(eq(jobs.user_id, userId))
+    .orderBy(desc(jobs.created_at))
     .limit(limit);
-  const out: JobDoc[] = [];
-  for await (const doc of cursor) {
-    out.push(stripId(doc) as JobDoc);
-  }
-  return out;
 }
 
 export async function listDocumentsForJob(jobId: string): Promise<DocumentDoc[]> {
-  const docs = await documentsCollection();
-  const cursor = docs.find({ job_id: jobId }).sort({ created_at: 1 });
-  const out: DocumentDoc[] = [];
-  for await (const d of cursor) out.push(stripId(d) as DocumentDoc);
-  return out;
+  return db()
+    .select()
+    .from(documents)
+    .where(eq(documents.job_id, jobId))
+    .orderBy(asc(documents.created_at));
 }
 
 type DocumentInsert = {
@@ -111,32 +97,29 @@ type DocumentUpdate = Partial<{
 }>;
 
 export async function insertDocument(values: DocumentInsert): Promise<DocumentDoc> {
-  const docs = await documentsCollection();
-  await ensureIndexes();
   const id = values.id ?? randomUUID();
-  const doc: DocumentDoc = {
-    id,
-    job_id: values.job_id,
-    filename: values.filename,
-    storage_key: values.storage_key,
-    size_bytes: values.size_bytes ?? null,
-    gemini_file_uri: null,
-    gemini_file_uploaded_at: null,
-    doc_type: null,
-    extraction: null,
-    created_at: now(),
-  };
-  await docs.insertOne(doc);
-  return doc;
+  const inserted = await db()
+    .insert(documents)
+    .values({
+      id,
+      job_id: values.job_id,
+      filename: values.filename,
+      storage_key: values.storage_key,
+      size_bytes: values.size_bytes ?? null,
+      gemini_file_uri: null,
+      gemini_file_uploaded_at: null,
+      doc_type: null,
+      extraction: null,
+    })
+    .returning();
+  return inserted[0]!;
 }
 
 export async function updateDocument(id: string, values: DocumentUpdate): Promise<void> {
-  const docs = await documentsCollection();
-  await docs.updateOne({ id }, { $set: { ...values } });
+  await db().update(documents).set({ ...values }).where(eq(documents.id, id));
 }
 
 export async function getDocument(id: string): Promise<DocumentDoc | null> {
-  const docs = await documentsCollection();
-  const doc = await docs.findOne({ id });
-  return stripId(doc) as DocumentDoc | null;
+  const rows = await db().select().from(documents).where(eq(documents.id, id)).limit(1);
+  return rows[0] ?? null;
 }

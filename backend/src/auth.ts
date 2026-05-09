@@ -8,7 +8,7 @@ import {
 } from 'jose';
 import { env } from './env.js';
 import { getOrCreateUser } from './db/users.js';
-import type { UserRole } from './db/mongo.js';
+import type { UserRole } from './db/schema.js';
 import { logger as fallbackLogger, type Logger } from './util/log.js';
 
 export type AuthUser = {
