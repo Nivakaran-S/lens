@@ -17,17 +17,19 @@
   "dependencies": {
     "@google/genai": "^1.0.0",
     "@hono/node-server": "^1.13.0",
+    "@node-rs/argon2": "^2.0.2",
     "adm-zip": "^0.5.16",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0",
-    "jose": "^5.9.0",
     "mysql2": "^3.22.3",
+    "nodemailer": "^8.0.7",
     "stripe": "^17.7.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.5",
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^8.0.0",
     "drizzle-kit": "^0.31.10",
     "nodemon": "^3.1.14",
     "tsx": "^4.19.0",

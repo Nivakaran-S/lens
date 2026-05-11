@@ -33,9 +33,12 @@ export type PaymentSource =
   | 'analysis_charge';
 
 // ── users ─────────────────────────────────────────────────────────────
-// id is the Supabase auth user_id (UUID string from the JWT sub claim).
-// MariaDB has no native UUID type — use char(36) holding the canonical
-// 36-char string ("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").
+// id is generated locally (no longer the Supabase auth user_id). MariaDB
+// has no native UUID type — use char(36) holding the canonical 36-char
+// string.
+// password_hash is the argon2id encoded hash; null means OAuth-only (not
+// currently used since OAuth was dropped for v1).
+// email_verified gates sign-in until the user clicks the verification link.
 // Email is varchar with utf8mb4_general_ci collation for case-insensitive
 // matching (replaces PG's CITEXT).
 export const users = mysqlTable(
@@ -43,6 +46,8 @@ export const users = mysqlTable(
   {
     id: varchar('id', { length: 36 }).primaryKey(),
     email: varchar('email', { length: 320 }).notNull().unique(),
+    password_hash: text('password_hash'),
+    email_verified: boolean('email_verified').notNull().default(false),
     role: varchar('role', { length: 16 }).$type<UserRole>().notNull().default('user'),
     credits: int('credits').notNull().default(0),
     stripe_customer_id: varchar('stripe_customer_id', { length: 64 }),
@@ -57,6 +62,54 @@ export const users = mysqlTable(
     roleCheck: check('users_role_check', sql`${t.role} IN ('user','admin')`),
     creditsCheck: check('users_credits_check', sql`${t.credits} >= 0`),
   }),
+);
+
+// ── sessions ──────────────────────────────────────────────────────────
+// Opaque session IDs are stored as cookies on the client and looked up
+// here on every authenticated request. Expiry is enforced server-side.
+export const sessions = mysqlTable(
+  'sessions',
+  {
+    id: varchar('id', { length: 64 }).primaryKey(),
+    user_id: varchar('user_id', { length: 36 }).notNull(),
+    expires_at: timestamp('expires_at', { mode: 'string', fsp: 3 }).notNull(),
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    userIdx: index('sessions_user_idx').on(t.user_id),
+    expiresIdx: index('sessions_expires_idx').on(t.expires_at),
+  }),
+);
+
+// ── email_verifications ───────────────────────────────────────────────
+// One-shot tokens emailed at sign-up. Token is the hex string in the URL.
+export const email_verifications = mysqlTable(
+  'email_verifications',
+  {
+    token: varchar('token', { length: 64 }).primaryKey(),
+    user_id: varchar('user_id', { length: 36 }).notNull(),
+    expires_at: timestamp('expires_at', { mode: 'string', fsp: 3 }).notNull(),
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+// ── password_resets ───────────────────────────────────────────────────
+// One-shot tokens emailed on /forgot-password. Token is hashed at rest so
+// a database leak doesn't allow attacker to reset accounts.
+export const password_resets = mysqlTable(
+  'password_resets',
+  {
+    token_hash: varchar('token_hash', { length: 64 }).primaryKey(),
+    user_id: varchar('user_id', { length: 36 }).notNull(),
+    expires_at: timestamp('expires_at', { mode: 'string', fsp: 3 }).notNull(),
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
+      .notNull()
+      .defaultNow(),
+  },
 );
 
 // ── jobs ──────────────────────────────────────────────────────────────
@@ -182,6 +235,7 @@ export type JobDoc = typeof jobs.$inferSelect;
 export type DocumentDoc = typeof documents.$inferSelect;
 export type CreditPackageDoc = typeof credit_packages.$inferSelect;
 export type PaymentDoc = typeof payments.$inferSelect;
+export type SessionDoc = typeof sessions.$inferSelect;
 
 // Aliases retained for callers that import the *Row names.
 export type {

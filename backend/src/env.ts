@@ -1,14 +1,28 @@
 import { z } from 'zod';
 
 const schema = z.object({
-  // Supabase Auth (JWT-only, no SDK calls from backend)
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_ANON_KEY: z.string().min(1),
-  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
-  SUPABASE_JWT_AUD: z.string().default('authenticated'),
-
-  // PostgreSQL (Plesk-managed, localhost:5432) — replaces MongoDB Atlas
+  // Database (MariaDB/MySQL via mysql2). URL-encode special chars in the
+  // password (e.g. `#` → `%23`).
   DATABASE_URL: z.string().url(),
+
+  // ── Self-hosted auth — SMTP for verification + reset emails ─────────
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().min(1),
+  SMTP_PASS: z.string().min(1),
+  SMTP_FROM: z.string().email(),
+  SMTP_FROM_NAME: z.string().default('Lens'),
+
+  // Session cookie config — used to decide whether to mark cookies Secure.
+  // In production this should be 'true' so cookies are HTTPS-only.
+  COOKIE_SECURE: z
+    .string()
+    .default('false')
+    .transform((s) => s.toLowerCase() === 'true'),
+  // Cookie Domain attribute. Set to '.checkmylegals.co.uk' so the session
+  // cookie issued by api.checkmylegals.co.uk is also readable by the
+  // apex frontend at checkmylegals.co.uk. Leave empty for localhost dev.
+  COOKIE_DOMAIN: z.string().default(''),
 
   // Local filesystem storage — replaces Cloudflare R2.
   // Files live at {UPLOAD_DIR}/{userId}/{jobId}/{filename} and
@@ -69,16 +83,19 @@ export function env(): Env {
 }
 
 const REQUIRED_KEYS = [
-  'SUPABASE_URL',
-  'SUPABASE_ANON_KEY',
   'DATABASE_URL',
   'UPLOAD_DIR',
   'FILE_SIGN_SECRET',
   'PUBLIC_API_URL',
+  'SMTP_HOST',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'SMTP_FROM',
 ] as const;
 const OPTIONAL_KEYS = [
-  'SUPABASE_JWT_SECRET',
-  'SUPABASE_JWT_AUD',
+  'SMTP_PORT',
+  'SMTP_FROM_NAME',
+  'COOKIE_SECURE',
   'FILE_SIGN_TTL_SECONDS',
   'GEMINI_API_KEY',
   'STRIPE_SECRET_KEY',

@@ -5,6 +5,13 @@ import { db, isUniqueViolation } from './client.js';
 import { users, type UserDoc, type UserRole } from './schema.js';
 import { insertPayment, type PaymentInsert } from './payments.js';
 
+export class EmailTakenError extends Error {
+  constructor() {
+    super('A user with this email already exists');
+    this.name = 'EmailTakenError';
+  }
+}
+
 const now = () => new Date().toISOString().slice(0, 23).replace('T', ' ');
 
 export type { UserDoc, UserRole };
@@ -26,49 +33,64 @@ export async function getUserByEmail(email: string): Promise<UserDoc | null> {
 }
 
 /**
- * Look up the user by Supabase auth id; create with default credits + role
- * derived from ADMIN_EMAILS if missing. Idempotent across concurrent
- * first-touches: we attempt an INSERT and treat a duplicate-key error as
- * "another caller won the race" — then re-fetch.
+ * Create a brand-new user with email + password hash. Throws EmailTakenError
+ * if the email is already registered. Role is derived from ADMIN_EMAILS;
+ * initial credit grant is logged as a signup_bonus payment.
  *
- * MariaDB has no ON CONFLICT … RETURNING, so this is the equivalent of
- * the Postgres version using try/catch instead.
+ * The caller (sign-up route) hashes the password and provides the hash.
  */
-export async function getOrCreateUser(args: { id: string; email?: string }): Promise<UserDoc> {
-  const email = (args.email ?? `${args.id}@unknown.local`).toLowerCase();
+export async function createUser(args: {
+  email: string;
+  passwordHash: string;
+}): Promise<UserDoc> {
+  const email = args.email.toLowerCase();
   const role: UserRole = adminEmails().has(email) ? 'admin' : 'user';
   const credits = env().INITIAL_FREE_CREDITS;
+  const id = randomUUID();
 
-  let inserted = false;
   try {
     await db().insert(users).values({
-      id: args.id,
+      id,
       email,
+      password_hash: args.passwordHash,
+      email_verified: false,
       role,
       credits,
       stripe_customer_id: null,
     });
-    inserted = true;
   } catch (err) {
-    // Duplicate primary key — another concurrent caller won. Fall through
-    // to the re-fetch below.
-    if (!isUniqueViolation(err)) throw err;
+    if (isUniqueViolation(err)) throw new EmailTakenError();
+    throw err;
   }
 
-  if (inserted && credits > 0) {
+  if (credits > 0) {
     await insertPayment({
-      user_id: args.id,
+      user_id: id,
       source: 'signup_bonus',
       credits_delta: credits,
       note: `Welcome bonus (${credits} free credits)`,
     });
   }
 
-  const existing = await getUser(args.id);
-  if (!existing) {
-    throw new Error(`getOrCreateUser: id=${args.id} not found after insert/race`);
-  }
-  return existing;
+  const created = await getUser(id);
+  if (!created) throw new Error(`createUser: id=${id} not found after insert`);
+  return created;
+}
+
+/** Mark email_verified=true. Used by the verify-email endpoint. */
+export async function markEmailVerified(userId: string): Promise<void> {
+  await db()
+    .update(users)
+    .set({ email_verified: true, updated_at: now() })
+    .where(eq(users.id, userId));
+}
+
+/** Replace the password_hash on a user. Used by password-reset endpoint. */
+export async function updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
+  await db()
+    .update(users)
+    .set({ password_hash: passwordHash, updated_at: now() })
+    .where(eq(users.id, userId));
 }
 
 /**

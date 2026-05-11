@@ -3,25 +3,19 @@
 export const dynamic = 'force-dynamic';
 
 export default function DebugPage() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const api = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const pk = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
   const rows: { name: string; value: string; ok: boolean }[] = [
-    {
-      name: 'NEXT_PUBLIC_SUPABASE_URL',
-      value: url ?? '(missing)',
-      ok: Boolean(url && url.startsWith('https://') && url.includes('.supabase.co')),
-    },
-    {
-      name: 'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-      value: anon ? `set — ${anon.length} chars, starts ${anon.slice(0, 12)}…` : '(missing)',
-      ok: Boolean(anon && anon.length > 100),
-    },
     {
       name: 'NEXT_PUBLIC_API_BASE_URL',
       value: api ?? '(missing)',
       ok: Boolean(api && api.startsWith('https://')),
+    },
+    {
+      name: 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
+      value: pk ? `set — ${pk.length} chars, starts ${pk.slice(0, 12)}…` : '(missing)',
+      ok: Boolean(pk && (pk.startsWith('pk_test_') || pk.startsWith('pk_live_'))),
     },
   ];
 
@@ -33,7 +27,7 @@ export default function DebugPage() {
       <p className="mt-2 text-sm text-zinc-500">
         These are the <code>NEXT_PUBLIC_*</code> values that the deployed JS bundle in your browser
         actually received at build time. They&apos;re not secrets — Next.js inlines them into every
-        bundle. Use this to confirm the Vercel env vars made it into the deploy.
+        bundle. Use this to confirm the env vars made it into the deploy.
       </p>
 
       <div
@@ -76,25 +70,6 @@ export default function DebugPage() {
           ))}
         </tbody>
       </table>
-
-      <h2 className="mt-10 text-base font-semibold">If anything is missing or wrong</h2>
-      <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-zinc-700 dark:text-zinc-300">
-        <li>
-          Vercel → <strong>lens-web</strong> project (NOT lens-api) → Settings → Environment
-          Variables → confirm all three keys are set with the <code>NEXT_PUBLIC_</code> prefix
-          (the prefix is required — Next.js drops anything else from the browser bundle).
-        </li>
-        <li>
-          Each variable must be ticked for <strong>Production + Preview + Development</strong>.
-        </li>
-        <li>
-          Trigger a <strong>redeploy</strong> after saving — env-var changes don&apos;t take effect
-          on existing deployments. Deployments tab → ⋯ on the latest → Redeploy.
-        </li>
-        <li>
-          Hard-reload this page (Ctrl+Shift+R) to bypass the browser cache for the JS bundle.
-        </li>
-      </ol>
     </main>
   );
 }

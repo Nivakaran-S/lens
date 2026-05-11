@@ -1,30 +1,15 @@
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { getSupabaseServer } from '../../lib/supabase/server';
 import { AppHeader } from '../../components/AppHeader';
 
 /**
- * Server-side gate: only authenticated admins can render any /admin route.
- * We check the Supabase session here for the email, then defer the actual
- * role check to the client side via /api/me. That avoids a server→backend
- * round-trip on every page transition while still preventing the page
- * from leaking before the role check completes (the (admin) sub-pages
- * fetch /api/me and redirect non-admins).
- *
- * For a stricter server-side guard, we'd fetch /api/me from the server
- * here with the user's access token; doable but adds complexity for
- * marginal benefit.
+ * Cookie-presence check happens in frontend/proxy.ts middleware. Role
+ * enforcement happens on the backend on every admin API call. The (admin)
+ * sub-pages also fetch /api/me and bounce non-admins client-side.
  */
-export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await getSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect('/sign-in?next=/admin');
-
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <AppHeader email={user.email ?? null} />
+      <AppHeader />
       <div className="border-b border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-6 py-2 text-xs">
           <span className="font-semibold text-amber-900 dark:text-amber-200">Admin</span>

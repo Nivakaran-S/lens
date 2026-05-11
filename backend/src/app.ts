@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
 import { adminRoute } from './routes/admin.js';
+import { authRoute } from './routes/auth.js';
 import { checkoutRoute } from './routes/checkout.js';
 import { filesRoute } from './routes/files.js';
 import { jobsRoute } from './routes/jobs.js';
@@ -19,8 +20,11 @@ app.use(
   '*',
   cors({
     origin: (origin) => (isOriginAllowed(origin) ? origin : null),
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Authorization', 'Content-Type'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowHeaders: ['Content-Type'],
+    // credentials: true tells the browser to send cookies (the session cookie)
+    // with cross-origin requests, AND lets the response set cookies. Required
+    // for our cookie-based session auth across the frontend↔api split-domain.
     credentials: true,
     maxAge: 600,
   }),
@@ -104,6 +108,7 @@ app.get('/api/diag/services', async (c) => {
 // regardless of upstream middleware.
 app.route('/api/stripe', stripeRoute);
 
+app.route('/api/auth', authRoute);
 app.route('/api/me', meRoute);
 app.route('/api/jobs', jobsRoute);
 app.route('/api/packages', packagesRoute);

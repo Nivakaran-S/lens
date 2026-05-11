@@ -1,6 +1,5 @@
 'use client';
 
-import { getSupabaseBrowser } from './supabase/client';
 import { PUBLIC_ENV } from './env';
 import type {
   AdminUser,
@@ -27,20 +26,18 @@ export class ApiError extends Error {
   }
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
-  const supabase = getSupabaseBrowser();
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('Not authenticated');
-  return { Authorization: `Bearer ${token}` };
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  for (const [k, v] of Object.entries(await authHeaders())) headers.set(k, v);
   if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-  const res = await fetch(`${PUBLIC_ENV.API_BASE_URL}${path}`, { ...init, headers });
+  // credentials: 'include' is required so the browser sends our session
+  // cookie cross-origin (frontend ↔ api subdomain). Backend CORS must
+  // mirror this with credentials: true (it does).
+  const res = await fetch(`${PUBLIC_ENV.API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: 'include',
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let message = res.statusText;
@@ -58,6 +55,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // ── Auth ──────────────────────────────────────────────────────────
+  signUp: (email: string, password: string) =>
+    request<{ ok: true; email: string }>('/api/auth/sign-up', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  signIn: (email: string, password: string) =>
+    request<{ ok: true; user: UserProfile }>('/api/auth/sign-in', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  signOut: () =>
+    request<{ ok: true }>('/api/auth/sign-out', { method: 'POST' }),
+  verifyEmail: (token: string) =>
+    request<{ ok: true }>('/api/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+  forgotPassword: (email: string) =>
+    request<{ ok: true }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (token: string, password: string) =>
+    request<{ ok: true }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
+
   // Profile
   me: () => request<UserProfile>('/api/me'),
 
@@ -77,10 +103,10 @@ export const api = {
   uploadJobFile: (jobId: string, file: File, onProgress?: (pct: number) => void) =>
     new Promise<void>((resolve, reject) => {
       (async () => {
-        const headers = await authHeaders();
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${PUBLIC_ENV.API_BASE_URL}/api/jobs/${jobId}/upload`);
-        for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+        // Send our session cookie cross-origin. Matches the fetch() helper.
+        xhr.withCredentials = true;
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable && onProgress) {
             onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));

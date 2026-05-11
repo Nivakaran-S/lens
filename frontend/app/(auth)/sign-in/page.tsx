@@ -3,7 +3,7 @@
 import { Suspense, useState, useTransition } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { getSupabaseBrowser } from '../../../lib/supabase/client';
+import { api, ApiError } from '../../../lib/api';
 
 function SignInForm() {
   const router = useRouter();
@@ -18,21 +18,15 @@ function SignInForm() {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const supabase = getSupabaseBrowser();
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        setError(error.message);
-        return;
+      try {
+        await api.signIn(email, password);
+        router.replace(next);
+        router.refresh();
+      } catch (err) {
+        const msg = err instanceof ApiError ? err.message.replace(/^API \d+: /, '') : 'Sign-in failed';
+        setError(msg);
       }
-      router.replace(next);
-      router.refresh();
     });
-  }
-
-  async function signInWithGoogle() {
-    const supabase = getSupabaseBrowser();
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-    await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
   }
 
   return (
@@ -62,6 +56,12 @@ function SignInForm() {
             onChange={(e) => setPassword(e.target.value)}
             className="mt-1 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-zinc-900 dark:border-zinc-700 dark:bg-zinc-900"
           />
+          <Link
+            href="/forgot-password"
+            className="mt-1 inline-block text-xs text-zinc-500 underline hover:text-zinc-900 dark:hover:text-zinc-100"
+          >
+            Forgot your password?
+          </Link>
         </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
@@ -74,19 +74,6 @@ function SignInForm() {
           {pending ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-
-      <div className="my-4 flex items-center gap-3 text-xs text-zinc-400">
-        <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-        OR
-        <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-      </div>
-
-      <button
-        onClick={signInWithGoogle}
-        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
-      >
-        Continue with Google
-      </button>
 
       <p className="mt-6 text-sm text-zinc-500">
         No account?{' '}

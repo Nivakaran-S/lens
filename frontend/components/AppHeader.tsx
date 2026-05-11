@@ -4,18 +4,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 import { Coins, Shield } from 'lucide-react';
-import { getSupabaseBrowser } from '../lib/supabase/client';
+import { api } from '../lib/api';
 import { useUserProfile } from '../lib/useUserProfile';
 
-export function AppHeader({ email }: { email: string | null }) {
+export function AppHeader() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { profile } = useUserProfile();
 
   function signOut() {
     startTransition(async () => {
-      const supabase = getSupabaseBrowser();
-      await supabase.auth.signOut();
+      await api.signOut().catch(() => {});
       router.replace('/');
       router.refresh();
     });
@@ -23,6 +22,7 @@ export function AppHeader({ email }: { email: string | null }) {
 
   const isAdmin = profile?.role === 'admin';
   const credits = profile?.credits ?? null;
+  const email = profile?.email ?? null;
 
   return (
     <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-black/60">
