@@ -86,6 +86,8 @@ export const api = {
 
   // Profile
   me: () => request<UserProfile>('/api/me'),
+  deleteAccount: () => request<{ ok: true }>('/api/me', { method: 'DELETE' }),
+  exportDataUrl: () => `${PUBLIC_ENV.API_BASE_URL}/api/me/export`,
 
   // Jobs
   listJobs: () => request<{ jobs: JobSummary[] }>('/api/jobs'),

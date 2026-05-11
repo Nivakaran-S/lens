@@ -58,8 +58,16 @@ const schema = z.object({
     .default('1')
     .transform((s) => Math.max(0, parseInt(s, 10) || 1)),
 
-  // Frontend URL — used for Stripe success/cancel redirects (legacy).
+  // Frontend URL — used for Stripe success/cancel redirects + email links.
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+
+  // GDPR retention for analysed jobs. Files + DB rows for any job in a
+  // terminal state (done / failed) are deleted after this many days. Set
+  // to 0 to disable the sweep (NOT recommended in production).
+  RETENTION_DAYS_JOBS: z
+    .string()
+    .default('90')
+    .transform((s) => Math.max(0, parseInt(s, 10) || 0)),
 
   // CORS
   CORS_ORIGINS: z.string().default('http://localhost:3000'),

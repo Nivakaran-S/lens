@@ -419,12 +419,14 @@ export default function LandingPage() {
             <a href="#how-it-works" className="hover:text-zinc-900 dark:hover:text-zinc-200">How it works</a>
             <a href="#pricing" className="hover:text-zinc-900 dark:hover:text-zinc-200">Pricing</a>
             <a href="#faq" className="hover:text-zinc-900 dark:hover:text-zinc-200">FAQ</a>
+            <Link href="/privacy" className="hover:text-zinc-900 dark:hover:text-zinc-200">Privacy</Link>
+            <Link href="/terms" className="hover:text-zinc-900 dark:hover:text-zinc-200">Terms</Link>
             <Link href="/sign-in" className="hover:text-zinc-900 dark:hover:text-zinc-200">Sign in</Link>
             <Link href="/sign-up" className="hover:text-zinc-900 dark:hover:text-zinc-200">Sign up</Link>
           </div>
         </div>
         <div className="mx-auto mt-8 max-w-6xl text-xs text-zinc-400">
-          © {new Date().getFullYear()} Lens. Lens is an informational triage tool and does not provide legal advice.
+          © {new Date().getFullYear()} Lens. Lens is an informational triage tool and does not provide legal advice. We use Google Gemini AI to analyse uploaded documents.
         </div>
       </footer>
     </div>

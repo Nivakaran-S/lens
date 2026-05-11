@@ -132,3 +132,30 @@ export async function statKey(key: string): Promise<{ size: number } | null> {
     return null;
   }
 }
+
+/**
+ * Recursively remove all files for a user's job — the ZIP plus every
+ * extracted PDF. Best-effort; missing folders are not an error.
+ * Used by GDPR account deletion and the retention sweep.
+ */
+export async function deleteJobFiles(userId: string, jobId: string): Promise<void> {
+  const dir = path.resolve(env().UPLOAD_DIR, userId, jobId);
+  // Guard: the resolved path must still be inside UPLOAD_DIR.
+  const root = path.resolve(env().UPLOAD_DIR);
+  if (!dir.startsWith(root + path.sep)) {
+    throw new Error(`deleteJobFiles: path escapes UPLOAD_DIR: ${dir}`);
+  }
+  await fsp.rm(dir, { recursive: true, force: true });
+}
+
+/**
+ * Remove a user's entire upload tree. Used when an account is deleted.
+ */
+export async function deleteUserFiles(userId: string): Promise<void> {
+  const dir = path.resolve(env().UPLOAD_DIR, userId);
+  const root = path.resolve(env().UPLOAD_DIR);
+  if (!dir.startsWith(root + path.sep)) {
+    throw new Error(`deleteUserFiles: path escapes UPLOAD_DIR: ${dir}`);
+  }
+  await fsp.rm(dir, { recursive: true, force: true });
+}

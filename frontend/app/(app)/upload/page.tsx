@@ -80,6 +80,20 @@ export default function UploadPage() {
         </p>
       </div>
 
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+        <strong>How we process your upload:</strong> documents are sent to Google&apos;s Gemini AI
+        for analysis. Files and reports are deleted 90 days after analysis completes — or sooner
+        if you delete your account. By uploading you confirm you have the right to share the
+        documents and accept that the output is informational only, not legal advice.{' '}
+        <a href="/privacy" target="_blank" className="underline">
+          Privacy
+        </a>{' '}
+        ·{' '}
+        <a href="/terms" target="_blank" className="underline">
+          Terms
+        </a>
+      </div>
+
       <div
         {...getRootProps()}
         className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-12 text-center transition-colors ${

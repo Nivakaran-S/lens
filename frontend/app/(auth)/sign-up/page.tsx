@@ -10,6 +10,7 @@ function SignUpForm() {
   const next = search.get('next') ?? '/dashboard';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -18,6 +19,10 @@ function SignUpForm() {
     e.preventDefault();
     setError(null);
     setInfo(null);
+    if (!agreed) {
+      setError('Please agree to the Privacy Policy and Terms of Service.');
+      return;
+    }
     startTransition(async () => {
       try {
         await api.signUp(email, password);
@@ -61,12 +66,32 @@ function SignUpForm() {
           <p className="mt-1 text-xs text-zinc-500">At least 8 characters.</p>
         </div>
 
+        <label className="flex items-start gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <input
+            type="checkbox"
+            checked={agreed}
+            onChange={(e) => setAgreed(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5"
+          />
+          <span>
+            I agree to the{' '}
+            <Link href="/privacy" target="_blank" className="underline">
+              Privacy Policy
+            </Link>{' '}
+            and{' '}
+            <Link href="/terms" target="_blank" className="underline">
+              Terms of Service
+            </Link>
+            . I understand the analysis is informational and not legal advice.
+          </span>
+        </label>
+
         {error && <p className="text-sm text-red-600">{error}</p>}
         {info && <p className="text-sm text-emerald-600">{info}</p>}
 
         <button
           type="submit"
-          disabled={pending || Boolean(info)}
+          disabled={pending || Boolean(info) || !agreed}
           className="w-full rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
         >
           {pending ? 'Creating account…' : info ? 'Sent' : 'Create account'}

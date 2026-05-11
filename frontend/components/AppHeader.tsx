@@ -60,6 +60,12 @@ export function AppHeader() {
             New analysis
           </Link>
           <span className="hidden text-xs text-zinc-500 sm:inline">{email}</span>
+          <Link
+            href="/settings"
+            className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+          >
+            Settings
+          </Link>
           <button
             onClick={signOut}
             disabled={pending}

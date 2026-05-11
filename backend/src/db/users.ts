@@ -212,6 +212,30 @@ export async function setRole(userId: string, role: UserRole): Promise<void> {
     .where(eq(users.id, userId));
 }
 
+/**
+ * GDPR right-of-erasure helper. Doesn't hard-delete the user row because
+ * payments.user_id is FK-CASCADE'd and we need to preserve the audit log
+ * for accounting / anti-fraud / Stripe reconciliation.
+ *
+ * Instead: zero the personal data, blow away the password hash so the row
+ * can never be signed into, and recycle the email to a tombstone so the
+ * original address is free to re-register.
+ */
+export async function anonymiseUser(userId: string): Promise<void> {
+  const tombstone = `deleted-${userId}@removed.local`;
+  await db()
+    .update(users)
+    .set({
+      email: tombstone,
+      password_hash: null,
+      email_verified: false,
+      stripe_customer_id: null,
+      credits: 0,
+      updated_at: now(),
+    })
+    .where(eq(users.id, userId));
+}
+
 export async function setStripeCustomerId(userId: string, customerId: string): Promise<void> {
   await db()
     .update(users)
