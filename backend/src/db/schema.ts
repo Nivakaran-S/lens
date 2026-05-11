@@ -3,24 +3,15 @@ import {
   bigint,
   boolean,
   check,
-  customType,
   index,
-  integer,
-  jsonb,
-  pgTable,
+  int,
+  json,
+  mysqlTable,
   text,
   timestamp,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core';
-
-// CITEXT (case-insensitive text). Drizzle has no first-class CITEXT type;
-// declare it via customType. Behaves like text at the TypeScript level.
-const citext = customType<{ data: string; driverData: string }>({
-  dataType() {
-    return 'citext';
-  },
-});
+  varchar,
+} from 'drizzle-orm/mysql-core';
 
 // ── enum-like literal unions used in $type<…>() ──────────────────────
 // Declared at the top so the table builders below can narrow text columns.
@@ -42,21 +33,23 @@ export type PaymentSource =
   | 'analysis_charge';
 
 // ── users ─────────────────────────────────────────────────────────────
-// id is the Supabase auth user_id (UUID). The backend never generates
-// this — it comes from the JWT `sub` claim — so no DEFAULT.
-// Timestamps use mode:'string' so callers see ISO strings as before.
-export const users = pgTable(
+// id is the Supabase auth user_id (UUID string from the JWT sub claim).
+// MariaDB has no native UUID type — use char(36) holding the canonical
+// 36-char string ("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx").
+// Email is varchar with utf8mb4_general_ci collation for case-insensitive
+// matching (replaces PG's CITEXT).
+export const users = mysqlTable(
   'users',
   {
-    id: uuid('id').primaryKey(),
-    email: citext('email').notNull().unique(),
-    role: text('role').$type<'user' | 'admin'>().notNull().default('user'),
-    credits: integer('credits').notNull().default(0),
-    stripe_customer_id: text('stripe_customer_id'),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    id: varchar('id', { length: 36 }).primaryKey(),
+    email: varchar('email', { length: 320 }).notNull().unique(),
+    role: varchar('role', { length: 16 }).$type<UserRole>().notNull().default('user'),
+    credits: int('credits').notNull().default(0),
+    stripe_customer_id: varchar('stripe_customer_id', { length: 64 }),
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
-    updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+    updated_at: timestamp('updated_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
   },
@@ -67,25 +60,26 @@ export const users = pgTable(
 );
 
 // ── jobs ──────────────────────────────────────────────────────────────
-export const jobs = pgTable(
+export const jobs = mysqlTable(
   'jobs',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    user_id: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+    id: varchar('id', { length: 36 }).primaryKey(),
+    user_id: varchar('user_id', { length: 36 }).notNull(),
     zip_storage_key: text('zip_storage_key').notNull(),
-    zip_filename: text('zip_filename').notNull(),
+    zip_filename: varchar('zip_filename', { length: 512 }).notNull(),
     zip_size_bytes: bigint('zip_size_bytes', { mode: 'number' }),
-    property_label: text('property_label'),
-    status: text('status').$type<JobStatus>().notNull().default('queued'),
+    property_label: varchar('property_label', { length: 512 }),
+    status: varchar('status', { length: 32 })
+      .$type<JobStatus>()
+      .notNull()
+      .default('queued'),
     status_detail: text('status_detail'),
-    report: jsonb('report').$type<unknown>(),
+    report: json('report').$type<unknown>(),
     error: text('error'),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
-    updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+    updated_at: timestamp('updated_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
   },
@@ -94,29 +88,27 @@ export const jobs = pgTable(
       'jobs_status_check',
       sql`${t.status} IN ('queued','uploaded','extracting','classifying','analyzing','synthesizing','done','failed')`,
     ),
-    userCreatedIdx: index('jobs_user_created_idx').on(t.user_id, t.created_at.desc()),
+    userCreatedIdx: index('jobs_user_created_idx').on(t.user_id, t.created_at),
   }),
 );
 
 // ── documents ─────────────────────────────────────────────────────────
-export const documents = pgTable(
+export const documents = mysqlTable(
   'documents',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    job_id: uuid('job_id')
-      .notNull()
-      .references(() => jobs.id, { onDelete: 'cascade' }),
-    filename: text('filename').notNull(),
+    id: varchar('id', { length: 36 }).primaryKey(),
+    job_id: varchar('job_id', { length: 36 }).notNull(),
+    filename: varchar('filename', { length: 512 }).notNull(),
     storage_key: text('storage_key').notNull(),
     size_bytes: bigint('size_bytes', { mode: 'number' }),
     gemini_file_uri: text('gemini_file_uri'),
     gemini_file_uploaded_at: timestamp('gemini_file_uploaded_at', {
-      withTimezone: true,
       mode: 'string',
+      fsp: 3,
     }),
-    doc_type: text('doc_type'),
-    extraction: jsonb('extraction').$type<unknown>(),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    doc_type: varchar('doc_type', { length: 64 }),
+    extraction: json('extraction').$type<unknown>(),
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
   },
@@ -126,53 +118,49 @@ export const documents = pgTable(
 );
 
 // ── credit_packages ───────────────────────────────────────────────────
-export const credit_packages = pgTable(
+export const credit_packages = mysqlTable(
   'credit_packages',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    name: text('name').notNull(),
-    credits: integer('credits').notNull(),
-    price_cents: integer('price_cents').notNull(),
-    currency: text('currency').notNull(),
+    id: varchar('id', { length: 36 }).primaryKey(),
+    name: varchar('name', { length: 256 }).notNull(),
+    credits: int('credits').notNull(),
+    price_cents: int('price_cents').notNull(),
+    currency: varchar('currency', { length: 8 }).notNull(),
     active: boolean('active').notNull().default(true),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
-    updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+    updated_at: timestamp('updated_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
     creditsCheck: check('credit_packages_credits_check', sql`${t.credits} > 0`),
     priceCheck: check('credit_packages_price_check', sql`${t.price_cents} >= 0`),
-    activeCreatedIdx: index('credit_packages_active_idx').on(t.active, t.created_at.desc()),
+    activeCreatedIdx: index('credit_packages_active_idx').on(t.active, t.created_at),
   }),
 );
 
 // ── payments ──────────────────────────────────────────────────────────
-// Append-only audit log. The partial unique index on stripe_payment_intent_id
-// guarantees Stripe webhook idempotency without colliding on the many null
-// rows from admin_grant / signup_bonus / refund / analysis_charge.
-export const payments = pgTable(
+// Append-only audit log. The unique index on stripe_payment_intent_id
+// guarantees Stripe webhook idempotency. MariaDB's UNIQUE treats each NULL
+// as distinct, so the many null rows from admin_grant / signup_bonus /
+// refund / analysis_charge naturally don't collide — no partial-index
+// trick needed (unlike Postgres).
+export const payments = mysqlTable(
   'payments',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    user_id: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    package_id: uuid('package_id').references(() => credit_packages.id, {
-      onDelete: 'set null',
-    }),
-    source: text('source').$type<PaymentSource>().notNull(),
-    credits_delta: integer('credits_delta').notNull(),
-    amount_cents: integer('amount_cents'),
-    currency: text('currency'),
-    stripe_payment_intent_id: text('stripe_payment_intent_id'),
-    admin_user_id: uuid('admin_user_id').references(() => users.id, {
-      onDelete: 'set null',
-    }),
+    id: varchar('id', { length: 36 }).primaryKey(),
+    user_id: varchar('user_id', { length: 36 }).notNull(),
+    package_id: varchar('package_id', { length: 36 }),
+    source: varchar('source', { length: 32 }).$type<PaymentSource>().notNull(),
+    credits_delta: int('credits_delta').notNull(),
+    amount_cents: int('amount_cents'),
+    currency: varchar('currency', { length: 8 }),
+    stripe_payment_intent_id: varchar('stripe_payment_intent_id', { length: 128 }),
+    admin_user_id: varchar('admin_user_id', { length: 36 }),
     note: text('note'),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    created_at: timestamp('created_at', { mode: 'string', fsp: 3 })
       .notNull()
       .defaultNow(),
   },
@@ -181,10 +169,10 @@ export const payments = pgTable(
       'payments_source_check',
       sql`${t.source} IN ('stripe','admin_grant','signup_bonus','refund','analysis_charge')`,
     ),
-    userCreatedIdx: index('payments_user_created_idx').on(t.user_id, t.created_at.desc()),
-    stripeIntentUnique: uniqueIndex('payments_stripe_intent_unique')
-      .on(t.stripe_payment_intent_id)
-      .where(sql`${t.stripe_payment_intent_id} IS NOT NULL`),
+    userCreatedIdx: index('payments_user_created_idx').on(t.user_id, t.created_at),
+    stripeIntentUnique: uniqueIndex('payments_stripe_intent_unique').on(
+      t.stripe_payment_intent_id,
+    ),
   }),
 );
 

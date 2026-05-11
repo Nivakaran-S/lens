@@ -1,10 +1,11 @@
-import { and, desc, eq, gte, ilike, lt, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { and, desc, eq, gte, like, lt, sql } from 'drizzle-orm';
 import { adminEmails, env } from '../env.js';
-import { db } from './client.js';
+import { db, isUniqueViolation } from './client.js';
 import { users, type UserDoc, type UserRole } from './schema.js';
 import { insertPayment, type PaymentInsert } from './payments.js';
 
-const now = () => new Date().toISOString();
+const now = () => new Date().toISOString().slice(0, 23).replace('T', ' ');
 
 export type { UserDoc, UserRole };
 
@@ -14,65 +15,69 @@ export async function getUser(id: string): Promise<UserDoc | null> {
 }
 
 export async function getUserByEmail(email: string): Promise<UserDoc | null> {
-  // CITEXT makes the equality case-insensitive automatically.
-  const rows = await db().select().from(users).where(eq(users.email, email)).limit(1);
+  // The email column uses utf8mb4_general_ci collation so eq() is
+  // case-insensitive (replaces PG's CITEXT).
+  const rows = await db()
+    .select()
+    .from(users)
+    .where(eq(users.email, email.toLowerCase()))
+    .limit(1);
   return rows[0] ?? null;
 }
 
 /**
  * Look up the user by Supabase auth id; create with default credits + role
  * derived from ADMIN_EMAILS if missing. Idempotent across concurrent
- * first-touches via INSERT … ON CONFLICT (id) DO NOTHING — only the winning
- * insert returns a row, so the signup_bonus payment is only logged once.
+ * first-touches: we attempt an INSERT and treat a duplicate-key error as
+ * "another caller won the race" — then re-fetch.
+ *
+ * MariaDB has no ON CONFLICT … RETURNING, so this is the equivalent of
+ * the Postgres version using try/catch instead.
  */
 export async function getOrCreateUser(args: { id: string; email?: string }): Promise<UserDoc> {
   const email = (args.email ?? `${args.id}@unknown.local`).toLowerCase();
   const role: UserRole = adminEmails().has(email) ? 'admin' : 'user';
   const credits = env().INITIAL_FREE_CREDITS;
 
-  // Race-safe insert: returns the row on insert, empty on conflict.
-  const inserted = await db()
-    .insert(users)
-    .values({
+  let inserted = false;
+  try {
+    await db().insert(users).values({
       id: args.id,
       email,
       role,
       credits,
       stripe_customer_id: null,
-    })
-    .onConflictDoNothing({ target: users.id })
-    .returning();
-
-  if (inserted[0]) {
-    // We won the race — log the signup bonus.
-    if (credits > 0) {
-      await insertPayment({
-        user_id: args.id,
-        source: 'signup_bonus',
-        credits_delta: credits,
-        note: `Welcome bonus (${credits} free credits)`,
-      });
-    }
-    return inserted[0];
+    });
+    inserted = true;
+  } catch (err) {
+    // Duplicate primary key — another concurrent caller won. Fall through
+    // to the re-fetch below.
+    if (!isUniqueViolation(err)) throw err;
   }
 
-  // Lost the race or already existed — re-fetch.
+  if (inserted && credits > 0) {
+    await insertPayment({
+      user_id: args.id,
+      source: 'signup_bonus',
+      credits_delta: credits,
+      note: `Welcome bonus (${credits} free credits)`,
+    });
+  }
+
   const existing = await getUser(args.id);
   if (!existing) {
-    throw new Error(`getOrCreateUser: id=${args.id} not found after ON CONFLICT`);
+    throw new Error(`getOrCreateUser: id=${args.id} not found after insert/race`);
   }
   return existing;
 }
 
 /**
  * Atomically deduct credits ONLY if the user has enough. Wrapped in a
- * transaction so the audit-log payment row is tied to the balance change —
- * if the row insert fails, the deduction rolls back too.
+ * transaction so the audit-log payment row is tied to the balance change.
  *
- * The atomicity guarantee: `UPDATE … WHERE credits >= $1 RETURNING credits`
- * either updates one row (acquiring its lock; concurrent updates serialise)
- * or zero rows. No transaction is needed for the underflow guard itself —
- * the transaction is purely for tying the payment row to the deduction.
+ * MariaDB lacks RETURNING, so we read affectedRows from the UPDATE result
+ * to decide success, then SELECT the new balance. The row-level lock on
+ * the UPDATE serialises concurrent deductions correctly.
  */
 export async function deductCredits(
   userId: string,
@@ -85,13 +90,17 @@ export async function deductCredits(
   }
 
   return db().transaction(async (tx) => {
-    const updated = await tx
+    const result = await tx
       .update(users)
       .set({ credits: sql`${users.credits} - ${amount}`, updated_at: now() })
-      .where(and(eq(users.id, userId), gte(users.credits, amount)))
-      .returning({ credits: users.credits });
+      .where(and(eq(users.id, userId), gte(users.credits, amount)));
 
-    if (updated.length === 0) {
+    // Drizzle's mysql2 update returns a tuple [ResultSetHeader, FieldPacket[]].
+    // affectedRows tells us whether the conditional UPDATE matched a row.
+    const header = (result as unknown as { affectedRows?: number }[])[0];
+    const affected = header?.affectedRows ?? 0;
+
+    if (affected === 0) {
       // Either user missing or insufficient — re-fetch for accurate balance.
       const rows = await tx
         .select({ credits: users.credits })
@@ -102,9 +111,10 @@ export async function deductCredits(
     }
 
     // Insert audit row INSIDE the transaction. If this throws, the deduction
-    // rolls back. Use the transaction's payments-collection helper.
+    // rolls back.
     const { payments } = await import('./schema.js');
     await tx.insert(payments).values({
+      id: randomId(),
       user_id: userId,
       package_id: payment.package_id ?? null,
       source: payment.source,
@@ -116,13 +126,18 @@ export async function deductCredits(
       note: payment.note ?? null,
     });
 
-    return { ok: true, balance: updated[0]!.credits };
+    const rows = await tx
+      .select({ credits: users.credits })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return { ok: true, balance: rows[0]?.credits ?? 0 };
   });
 }
 
 /**
- * Atomically grant credits (positive delta only). Logs a payment row in the
- * same transaction. Used by Stripe webhook, signup bonus, admin grants, refunds.
+ * Atomically grant credits (positive delta only). Logs a payment row in
+ * the same transaction.
  */
 export async function addCredits(
   userId: string,
@@ -135,18 +150,19 @@ export async function addCredits(
   }
 
   return db().transaction(async (tx) => {
-    const updated = await tx
+    const result = await tx
       .update(users)
       .set({ credits: sql`${users.credits} + ${amount}`, updated_at: now() })
-      .where(eq(users.id, userId))
-      .returning({ credits: users.credits });
+      .where(eq(users.id, userId));
 
-    if (updated.length === 0) {
+    const header = (result as unknown as { affectedRows?: number }[])[0];
+    if ((header?.affectedRows ?? 0) === 0) {
       throw new Error(`addCredits: user ${userId} not found`);
     }
 
     const { payments } = await import('./schema.js');
     await tx.insert(payments).values({
+      id: randomId(),
       user_id: userId,
       package_id: payment.package_id ?? null,
       source: payment.source,
@@ -158,7 +174,12 @@ export async function addCredits(
       note: payment.note ?? null,
     });
 
-    return { balance: updated[0]!.credits };
+    const rows = await tx
+      .select({ credits: users.credits })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return { balance: rows[0]?.credits ?? 0 };
   });
 }
 
@@ -184,12 +205,13 @@ export type ListUsersOptions = {
 
 /**
  * List users for the admin panel. Filter on email substring if `search`
- * is given (case-insensitive via CITEXT). Newest first.
+ * is given (case-insensitive via the column's ci collation). Newest first.
  */
 export async function listUsers(opts: ListUsersOptions = {}): Promise<UserDoc[]> {
   const conds = [];
   if (opts.search) {
-    conds.push(ilike(users.email, `%${opts.search}%`));
+    // utf8mb4_general_ci on the column makes LIKE case-insensitive.
+    conds.push(like(users.email, `%${opts.search}%`));
   }
   if (opts.cursor) {
     conds.push(lt(users.created_at, opts.cursor));
@@ -203,3 +225,5 @@ export async function listUsers(opts: ListUsersOptions = {}): Promise<UserDoc[]>
   }
   return query;
 }
+
+const randomId = (): string => randomUUID();

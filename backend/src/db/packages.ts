@@ -4,7 +4,7 @@ import { db } from './client.js';
 import { credit_packages, type CreditPackageDoc } from './schema.js';
 import { env } from '../env.js';
 
-const now = () => new Date().toISOString();
+const now = () => new Date().toISOString().slice(0, 23).replace('T', ' ');
 
 export type { CreditPackageDoc };
 
@@ -40,18 +40,17 @@ export type PackageInsert = {
 
 export async function createPackage(values: PackageInsert): Promise<CreditPackageDoc> {
   const id = values.id ?? randomUUID();
-  const inserted = await db()
-    .insert(credit_packages)
-    .values({
-      id,
-      name: values.name,
-      credits: values.credits,
-      price_cents: values.price_cents,
-      currency: (values.currency ?? env().STRIPE_CURRENCY).toLowerCase(),
-      active: values.active ?? true,
-    })
-    .returning();
-  return inserted[0]!;
+  await db().insert(credit_packages).values({
+    id,
+    name: values.name,
+    credits: values.credits,
+    price_cents: values.price_cents,
+    currency: (values.currency ?? env().STRIPE_CURRENCY).toLowerCase(),
+    active: values.active ?? true,
+  });
+  const row = await getPackage(id);
+  if (!row) throw new Error(`createPackage: row ${id} not found after insert`);
+  return row;
 }
 
 export type PackageUpdate = Partial<{
@@ -70,12 +69,8 @@ export async function updatePackage(
   if (typeof values.currency === 'string') {
     set.currency = values.currency.toLowerCase();
   }
-  const updated = await db()
-    .update(credit_packages)
-    .set(set)
-    .where(eq(credit_packages.id, id))
-    .returning();
-  return updated[0] ?? null;
+  await db().update(credit_packages).set(set).where(eq(credit_packages.id, id));
+  return getPackage(id);
 }
 
 /** Soft-delete: flip active=false so historical purchase records still resolve. */

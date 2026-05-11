@@ -104,7 +104,7 @@ stripeRoute.post('/webhook', async (c) => {
     // Concurrent webhook retry won the race — another insert with the
     // same payment_intent_id already happened. Treat as success.
     if (isUniqueViolation(err, 'payments_stripe_intent_unique')) {
-      log.info(`webhook: race lost (23505) — already credited; skipping`);
+      log.info(`webhook: race lost (1062/ER_DUP_ENTRY) — already credited; skipping`);
       return c.json({ received: true, idempotent: true });
     }
     log.error('webhook: failed to credit user', {

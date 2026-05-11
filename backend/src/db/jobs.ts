@@ -11,7 +11,7 @@ import {
 
 export type { DocumentDoc as DocumentRow, JobDoc as JobRow, JobStatus };
 
-const now = () => new Date().toISOString();
+const now = () => new Date().toISOString().slice(0, 23).replace('T', ' ');
 
 type JobInsert = {
   id?: string;
@@ -34,22 +34,22 @@ type JobUpdate = Partial<{
 
 export async function insertJob(values: JobInsert): Promise<JobDoc> {
   const id = values.id ?? randomUUID();
-  const inserted = await db()
-    .insert(jobs)
-    .values({
-      id,
-      user_id: values.user_id,
-      zip_storage_key: values.zip_storage_key,
-      zip_filename: values.zip_filename,
-      zip_size_bytes: values.zip_size_bytes ?? null,
-      property_label: values.property_label ?? null,
-      status: values.status ?? 'queued',
-      status_detail: null,
-      report: null,
-      error: null,
-    })
-    .returning();
-  return inserted[0]!;
+  await db().insert(jobs).values({
+    id,
+    user_id: values.user_id,
+    zip_storage_key: values.zip_storage_key,
+    zip_filename: values.zip_filename,
+    zip_size_bytes: values.zip_size_bytes ?? null,
+    property_label: values.property_label ?? null,
+    status: values.status ?? 'queued',
+    status_detail: null,
+    report: null,
+    error: null,
+  });
+  // MariaDB has no RETURNING — re-fetch the row.
+  const row = await getJob(id);
+  if (!row) throw new Error(`insertJob: row ${id} not found after insert`);
+  return row;
 }
 
 export async function updateJob(id: string, values: JobUpdate): Promise<void> {
@@ -98,21 +98,20 @@ type DocumentUpdate = Partial<{
 
 export async function insertDocument(values: DocumentInsert): Promise<DocumentDoc> {
   const id = values.id ?? randomUUID();
-  const inserted = await db()
-    .insert(documents)
-    .values({
-      id,
-      job_id: values.job_id,
-      filename: values.filename,
-      storage_key: values.storage_key,
-      size_bytes: values.size_bytes ?? null,
-      gemini_file_uri: null,
-      gemini_file_uploaded_at: null,
-      doc_type: null,
-      extraction: null,
-    })
-    .returning();
-  return inserted[0]!;
+  await db().insert(documents).values({
+    id,
+    job_id: values.job_id,
+    filename: values.filename,
+    storage_key: values.storage_key,
+    size_bytes: values.size_bytes ?? null,
+    gemini_file_uri: null,
+    gemini_file_uploaded_at: null,
+    doc_type: null,
+    extraction: null,
+  });
+  const row = await getDocument(id);
+  if (!row) throw new Error(`insertDocument: row ${id} not found after insert`);
+  return row;
 }
 
 export async function updateDocument(id: string, values: DocumentUpdate): Promise<void> {
