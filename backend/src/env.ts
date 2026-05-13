@@ -11,7 +11,7 @@ const schema = z.object({
   SMTP_USER: z.string().min(1),
   SMTP_PASS: z.string().min(1),
   SMTP_FROM: z.string().email(),
-  SMTP_FROM_NAME: z.string().default('Lens'),
+  SMTP_FROM_NAME: z.string().default('Check My Legals'),
 
   // Session cookie config — used to decide whether to mark cookies Secure.
   // In production this should be 'true' so cookies are HTTPS-only.

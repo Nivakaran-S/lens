@@ -28,7 +28,7 @@ export function AppHeader() {
     <header className="border-b border-zinc-200 bg-white/80 backdrop-blur dark:border-zinc-800 dark:bg-black/60">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
         <Link href="/dashboard" className="text-base font-semibold tracking-tight">
-          Lens
+          Check My Legals
         </Link>
         <nav className="flex items-center gap-3 text-sm">
           <Link

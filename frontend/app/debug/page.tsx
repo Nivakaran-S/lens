@@ -23,7 +23,7 @@ export default function DebugPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
-      <h1 className="text-2xl font-semibold">Lens — frontend debug</h1>
+      <h1 className="text-2xl font-semibold">Check My Legals — frontend debug</h1>
       <p className="mt-2 text-sm text-zinc-500">
         These are the <code>NEXT_PUBLIC_*</code> values that the deployed JS bundle in your browser
         actually received at build time. They&apos;re not secrets — Next.js inlines them into every

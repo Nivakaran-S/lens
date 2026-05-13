@@ -44,7 +44,7 @@ function SignUpForm() {
 
   return (
     <div className="w-full max-w-sm">
-      <h1 className="text-2xl font-semibold tracking-tight">Create your Lens account</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Create your Check My Legals account</h1>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <div>

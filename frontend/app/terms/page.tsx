@@ -1,8 +1,8 @@
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'Terms of Service — Lens',
-  description: 'The rules of using Lens.',
+  title: 'Terms of Service — Check My Legals',
+  description: 'The rules of using Check My Legals.',
 };
 
 const LAST_UPDATED = '11 May 2026';
@@ -21,7 +21,7 @@ export default function TermsPage() {
       <p className="mt-2 text-xs text-zinc-500">Last updated: {LAST_UPDATED}</p>
 
       <p className="mt-6">
-        These terms govern your use of Lens (&quot;the Service&quot;), provided at{' '}
+        These terms govern your use of Check My Legals (&quot;the Service&quot;), provided at{' '}
         <a href="https://checkmylegals.co.uk" className="underline">
           checkmylegals.co.uk
         </a>
@@ -29,10 +29,10 @@ export default function TermsPage() {
       </p>
 
       <h2 className="mt-10 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-        1. What Lens is — and isn&apos;t
+        1. What Check My Legals is — and isn&apos;t
       </h2>
       <p className="mt-2">
-        Lens is an automated <strong>triage tool</strong> for UK auction legal packs. It surfaces
+        Check My Legals is an automated <strong>triage tool</strong> for UK auction legal packs. It surfaces
         common risks for buyers to review with their conveyancer. The output is{' '}
         <strong>informational only</strong>:
       </p>
@@ -135,7 +135,7 @@ export default function TermsPage() {
       </p>
       <p className="mt-2">
         <strong>
-          Because Lens is informational and not legal advice, you bear sole responsibility for
+          Because Check My Legals is informational and not legal advice, you bear sole responsibility for
           any bidding, purchase, or commercial decision you make.
         </strong>
       </p>

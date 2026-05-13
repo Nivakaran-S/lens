@@ -58,7 +58,7 @@ export async function createPaymentIntent(args: {
     amount: args.package.price_cents,
     currency: args.package.currency,
     customer: customerId,
-    description: `${args.package.name} — ${args.package.credits} Lens credit${
+    description: `${args.package.name} — ${args.package.credits} Check My Legals credit${
       args.package.credits === 1 ? '' : 's'
     }`,
     automatic_payment_methods: { enabled: true },

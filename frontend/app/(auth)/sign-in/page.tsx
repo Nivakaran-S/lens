@@ -31,7 +31,7 @@ function SignInForm() {
 
   return (
     <div className="w-full max-w-sm">
-      <h1 className="text-2xl font-semibold tracking-tight">Sign in to Lens</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Sign in to Check My Legals</h1>
       <p className="mt-1 text-sm text-zinc-500">UK auction legal-pack analysis.</p>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">

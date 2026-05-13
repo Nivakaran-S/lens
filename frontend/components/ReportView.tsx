@@ -14,21 +14,28 @@ function isObjectFinding(f: HeadlineFinding | string): f is HeadlineFinding {
 }
 
 export function ReportView({ report }: { report: SynthesisReport }) {
+  // Reports from the worker may legitimately have missing arrays if Gemini
+  // returned a partial structure. Default to [] so .map / .length never crash.
+  const overallRisk = report.overall_risk ?? 'low';
+  const headlines = report.headline_findings ?? [];
+  const risks = report.risks ?? [];
+  const questions = report.buyer_questions_for_solicitor ?? [];
+
   return (
     <section className="space-y-6">
       <div className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold">Overall risk</h2>
-          <span className={`rounded-full px-2.5 py-1 text-xs font-medium uppercase ${OVERALL_STYLE[report.overall_risk]}`}>
-            {report.overall_risk}
+          <span className={`rounded-full px-2.5 py-1 text-xs font-medium uppercase ${OVERALL_STYLE[overallRisk] ?? OVERALL_STYLE.low}`}>
+            {overallRisk}
           </span>
         </div>
 
-        {report.headline_findings.length > 0 && (
+        {headlines.length > 0 && (
           <ul className="mt-3 space-y-3 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-            {report.headline_findings.map((entry, i) => {
+            {headlines.map((entry, i) => {
               const finding = isObjectFinding(entry) ? entry.finding : entry;
-              const sources = isObjectFinding(entry) ? entry.sources : [];
+              const sources = isObjectFinding(entry) ? entry.sources ?? [] : [];
               return (
                 <li key={i}>
                   <div>• {finding}</div>
@@ -53,22 +60,22 @@ export function ReportView({ report }: { report: SynthesisReport }) {
         )}
       </div>
 
-      {report.risks.length > 0 && (
+      {risks.length > 0 && (
         <div>
           <h2 className="mb-3 text-base font-semibold">Findings</h2>
           <div className="space-y-3">
-            {report.risks.map((r, i) => (
+            {risks.map((r, i) => (
               <RiskCard key={i} risk={r} />
             ))}
           </div>
         </div>
       )}
 
-      {report.buyer_questions_for_solicitor.length > 0 && (
+      {questions.length > 0 && (
         <div className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
           <h2 className="text-base font-semibold">Questions for your solicitor</h2>
           <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-zinc-700 dark:text-zinc-300">
-            {report.buyer_questions_for_solicitor.map((q, i) => (
+            {questions.map((q, i) => (
               <li key={i}>{q}</li>
             ))}
           </ol>

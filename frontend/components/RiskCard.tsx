@@ -9,25 +9,31 @@ const SEVERITY_STYLE: Record<RiskSeverity, string> = {
 };
 
 export function RiskCard({ risk }: { risk: Risk }) {
+  const severity = risk.severity ?? 'low';
+  const evidence = risk.evidence ?? [];
   return (
-    <article className={`rounded-lg border p-4 ${SEVERITY_STYLE[risk.severity]}`}>
+    <article className={`rounded-lg border p-4 ${SEVERITY_STYLE[severity] ?? SEVERITY_STYLE.low}`}>
       <header className="flex items-center gap-2">
         <span className="rounded-full border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
-          {risk.severity}
+          {severity}
         </span>
-        <span className="text-[11px] uppercase tracking-wide opacity-70">{risk.category}</span>
+        {risk.category && (
+          <span className="text-[11px] uppercase tracking-wide opacity-70">{risk.category}</span>
+        )}
         {risk.blocks_completion && (
           <span className="ml-auto rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
             Blocks completion
           </span>
         )}
       </header>
-      <h3 className="mt-2 text-sm font-semibold">{risk.title}</h3>
-      <p className="mt-1.5 text-sm leading-relaxed">{risk.explanation}</p>
+      <h3 className="mt-2 text-sm font-semibold">{risk.title ?? '(no title)'}</h3>
+      {risk.explanation && (
+        <p className="mt-1.5 text-sm leading-relaxed">{risk.explanation}</p>
+      )}
 
-      {risk.evidence.length > 0 && (
+      {evidence.length > 0 && (
         <div className="mt-3 space-y-1.5 text-xs opacity-90">
-          {risk.evidence.map((e, i) => (
+          {evidence.map((e, i) => (
             <p key={i}>
               <span className="font-medium">{e.doc_filename}</span>
               {e.page_ref && <span className="opacity-70"> · p.{e.page_ref}</span>}
@@ -37,10 +43,12 @@ export function RiskCard({ risk }: { risk: Risk }) {
         </div>
       )}
 
-      <p className="mt-3 text-xs">
-        <span className="font-medium">Action: </span>
-        {risk.recommended_action}
-      </p>
+      {risk.recommended_action && (
+        <p className="mt-3 text-xs">
+          <span className="font-medium">Action: </span>
+          {risk.recommended_action}
+        </p>
+      )}
     </article>
   );
 }

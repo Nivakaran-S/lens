@@ -1,8 +1,8 @@
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'Privacy Policy — Lens',
-  description: 'How Lens collects, uses, and protects your personal data under UK GDPR.',
+  title: 'Privacy Policy — Check My Legals',
+  description: 'How Check My Legals collects, uses, and protects your personal data under UK GDPR.',
 };
 
 const CONTROLLER_EMAIL = 'contact@checkmylegals.co.uk';
@@ -21,7 +21,7 @@ export default function PrivacyPage() {
       <p className="mt-2 text-xs text-zinc-500">Last updated: {LAST_UPDATED}</p>
 
       <p className="mt-6">
-        This policy explains how Lens (&quot;we&quot;, &quot;us&quot;) collects, uses, and protects your personal
+        This policy explains how Check My Legals (&quot;we&quot;, &quot;us&quot;) collects, uses, and protects your personal
         data when you use{' '}
         <a href="https://checkmylegals.co.uk" className="underline">
           checkmylegals.co.uk
@@ -207,7 +207,7 @@ export default function PrivacyPage() {
 
       <hr className="mt-12 border-zinc-200 dark:border-zinc-800" />
       <p className="mt-6 text-xs text-zinc-500">
-        Lens is an informational triage tool and does not provide legal advice. Always commission
+        Check My Legals is an informational triage tool and does not provide legal advice. Always commission
         a full review by a qualified conveyancer before bidding on a property.
       </p>
     </article>

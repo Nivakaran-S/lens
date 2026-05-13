@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Lens — UK auction legal-pack analyser',
+  title: 'Check My Legals — UK auction legal-pack analyser',
   description:
     'Triage UK property auction legal packs in minutes. AI review of title, searches, TA6/TA10, EPC, and special conditions.',
 };

@@ -66,7 +66,7 @@ const STEPS = [
   },
   {
     icon: Sparkles,
-    title: 'Lens reads everything',
+    title: 'Check My Legals reads everything',
     body: 'PDFs, scans, and forms classified and analysed in a single pass — no hand-sorting.',
   },
   {
@@ -79,7 +79,7 @@ const STEPS = [
 const FAQS = [
   {
     q: 'How accurate is it?',
-    a: 'Lens is a triage tool, not a substitute for a conveyancer. It catches the obvious red flags fast so your solicitor can spend their time on the substantive issues. Every finding is cited to the source document — verify before bidding.',
+    a: 'Check My Legals is a triage tool, not a substitute for a conveyancer. It catches the obvious red flags fast so your solicitor can spend their time on the substantive issues. Every finding is cited to the source document — verify before bidding.',
   },
   {
     q: 'What does it cost?',
@@ -87,7 +87,7 @@ const FAQS = [
   },
   {
     q: 'Which auction packs work?',
-    a: 'Any standard UK residential or commercial pack as a single ZIP. Lens has been tuned on packs from EIG, Allsop, Auction House, SDL, Pugh, and BidX1.',
+    a: 'Any standard UK residential or commercial pack as a single ZIP. Check My Legals has been tuned on packs from EIG, Allsop, Auction House, SDL, Pugh, and BidX1.',
   },
   {
     q: 'Is my data safe?',
@@ -95,7 +95,7 @@ const FAQS = [
   },
   {
     q: 'Will it replace my solicitor?',
-    a: 'No. Lens gives you a 3-minute view to decide which lots are worth a deeper legal review — and which to skip before paying for one.',
+    a: 'No. Check My Legals gives you a 3-minute view to decide which lots are worth a deeper legal review — and which to skip before paying for one.',
   },
 ];
 
@@ -104,7 +104,7 @@ export default function LandingPage() {
     <div className="flex flex-1 flex-col">
       <header className="sticky top-0 z-10 border-b border-zinc-200/70 bg-white/80 backdrop-blur dark:border-zinc-800/70 dark:bg-zinc-950/80">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <span className="text-base font-semibold tracking-tight">Lens</span>
+          <span className="text-base font-semibold tracking-tight">Check My Legals</span>
           <nav className="flex items-center gap-1 sm:gap-3 text-sm">
             <a href="#features" className="hidden px-2 py-1 text-zinc-600 hover:text-zinc-900 sm:inline dark:text-zinc-400 dark:hover:text-zinc-100">
               Features
@@ -147,7 +147,7 @@ export default function LandingPage() {
               Triage an auction legal pack in three minutes.
             </h1>
             <p className="mx-auto mt-5 max-w-2xl text-lg text-zinc-600 dark:text-zinc-400">
-              Drop the ZIP. Lens reads the title, searches, TA6/TA10, EPC, and special conditions —
+              Drop the ZIP. Check My Legals reads the title, searches, TA6/TA10, EPC, and special conditions —
               then surfaces restrictive covenants, MEES risk, executor mismatches, and other red
               flags with citations to the source documents.
             </p>
@@ -197,7 +197,7 @@ export default function LandingPage() {
                 Built for the way auction packs actually arrive.
               </h2>
               <p className="mt-3 text-zinc-600 dark:text-zinc-400">
-                Hundreds of pages, mixed scans, inconsistent file names. Lens classifies each
+                Hundreds of pages, mixed scans, inconsistent file names. Check My Legals classifies each
                 document, extracts the parts that matter, and joins them up.
               </p>
             </div>
@@ -206,7 +206,7 @@ export default function LandingPage() {
               <div className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="flex items-center gap-2">
                   <FileText className="h-5 w-5 text-indigo-600" />
-                  <h3 className="text-base font-semibold">What Lens reads</h3>
+                  <h3 className="text-base font-semibold">What Check My Legals reads</h3>
                 </div>
                 <ul className="mt-4 space-y-3">
                   {READS.map((r) => (
@@ -248,7 +248,7 @@ export default function LandingPage() {
             <div className="mx-auto max-w-2xl text-center">
               <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Three steps. No hand-sorting.</h2>
               <p className="mt-3 text-zinc-600 dark:text-zinc-400">
-                You upload exactly what the auctioneer sends you. Lens does the rest.
+                You upload exactly what the auctioneer sends you. Check My Legals does the rest.
               </p>
             </div>
 
@@ -339,7 +339,7 @@ export default function LandingPage() {
         <section className="px-6 py-20">
           <div className="mx-auto max-w-5xl">
             <div className="mx-auto max-w-2xl text-center">
-              <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Who uses Lens</h2>
+              <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Who uses Check My Legals</h2>
             </div>
             <div className="mt-12 grid gap-4 sm:grid-cols-3">
               {[
@@ -411,7 +411,7 @@ export default function LandingPage() {
       <footer className="border-t border-zinc-200 px-6 py-10 text-sm text-zinc-500 dark:border-zinc-800">
         <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <div className="font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">Lens</div>
+            <div className="font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">Check My Legals</div>
             <div className="mt-1 text-xs">UK auction legal-pack triage. Built for speed.</div>
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
@@ -426,7 +426,7 @@ export default function LandingPage() {
           </div>
         </div>
         <div className="mx-auto mt-8 max-w-6xl text-xs text-zinc-400">
-          © {new Date().getFullYear()} Lens. Lens is an informational triage tool and does not provide legal advice. We use Google Gemini AI to analyse uploaded documents.
+          © {new Date().getFullYear()} Check My Legals. Check My Legals is an informational triage tool and does not provide legal advice. We use Google Gemini AI to analyse uploaded documents.
         </div>
       </footer>
     </div>
