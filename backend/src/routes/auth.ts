@@ -57,22 +57,35 @@ authRoute.post('/sign-up', async (c) => {
 
   let passwordHash: string;
   try {
+    log.info('signUp: hashing password');
     passwordHash = await hashPassword(parsed.data.password);
+    log.info('signUp: hash ok');
   } catch (err) {
     if (err instanceof WeakPasswordError) {
       throw new HTTPException(400, { message: err.message });
     }
+    log.error('signUp: hashPassword threw', {
+      error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    });
     throw err;
   }
 
   try {
+    log.info('signUp: creating user');
     const user = await createUser({
       email: parsed.data.email,
       passwordHash,
     });
+    log.info('signUp: user created', { id: user.id.slice(0, 8) });
+
+    log.info('signUp: creating verification token');
     const token = await createEmailVerificationToken(user.id);
+    log.info('signUp: token created');
+
     sendVerificationEmail({ to: user.email, token }).catch((e) =>
-      log.error('verification email send failed', { error: e instanceof Error ? e.message : String(e) }),
+      log.error('verification email send failed', {
+        error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+      }),
     );
     return c.json({ ok: true, email: user.email });
   } catch (err) {
@@ -82,6 +95,9 @@ authRoute.post('/sign-up', async (c) => {
       // email enumeration. If you'd prefer a clearer UX, return 409 here.
       return c.json({ ok: true, email: parsed.data.email });
     }
+    log.error('signUp: user/token step threw', {
+      error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    });
     throw err;
   }
 });

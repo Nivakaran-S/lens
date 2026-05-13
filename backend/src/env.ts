@@ -24,6 +24,15 @@ const schema = z.object({
   // apex frontend at checkmylegals.co.uk. Leave empty for localhost dev.
   COOKIE_DOMAIN: z.string().default(''),
 
+  // When true, unhandled-error 500 responses include the underlying
+  // exception message and name in the body. Useful for diagnosing issues
+  // when server-side logs aren't easily reachable. NEVER enable in real
+  // production once you can read logs — it leaks internal detail.
+  DEBUG_ERRORS: z
+    .string()
+    .default('false')
+    .transform((s) => s.toLowerCase() === 'true'),
+
   // Local filesystem storage — replaces Cloudflare R2.
   // Files live at {UPLOAD_DIR}/{userId}/{jobId}/{filename} and
   // {UPLOAD_DIR}/{userId}/{jobId}/docs/{idx}-{filename}.pdf

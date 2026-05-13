@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
-import { corsOrigins, envStatus, isOriginAllowed } from './env.js';
+import { corsOrigins, env, envStatus, isOriginAllowed } from './env.js';
 import { adminRoute } from './routes/admin.js';
 import { authRoute } from './routes/auth.js';
 import { checkoutRoute } from './routes/checkout.js';
@@ -10,7 +10,7 @@ import { jobsRoute } from './routes/jobs.js';
 import { meRoute } from './routes/me.js';
 import { packagesRoute } from './routes/packages.js';
 import { stripeRoute } from './routes/stripe.js';
-import { requestLogger } from './util/log.js';
+import { logger as fallbackLogger, requestLogger, type Logger } from './util/log.js';
 import { TimeoutError } from './util/timeout.js';
 
 export const app = new Hono();
@@ -126,7 +126,29 @@ app.onError((err, c) => {
     console.error('[timeout]', err.message);
     return c.json({ error: err.message }, 503);
   }
-  console.error('[unhandled]', err);
+
+  // Unhandled. Log every piece of context so the operator doesn't have to
+  // guess which route, request, or call threw. Uses the per-request logger
+  // (which carries reqId) when available, otherwise a fresh one.
+  const log = (c.get('log' as never) as Logger | undefined) ?? fallbackLogger('unhandled');
+  const errInfo =
+    err instanceof Error
+      ? { name: err.name, message: err.message, stack: err.stack }
+      : { value: String(err) };
+  log.error('[unhandled]', {
+    method: c.req.method,
+    path: c.req.path,
+    ...errInfo,
+  });
+
+  // In debug mode, surface the cause in the response body too. Off in
+  // production unless DEBUG_ERRORS=true is explicitly set on the host.
+  if (env().DEBUG_ERRORS && err instanceof Error) {
+    return c.json(
+      { error: 'Internal Server Error', cause: err.message, name: err.name },
+      500,
+    );
+  }
   return c.json({ error: 'Internal Server Error' }, 500);
 });
 
