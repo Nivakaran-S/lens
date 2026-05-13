@@ -101,6 +101,61 @@ app.get('/api/diag/services', async (c) => {
   });
 });
 
+/**
+ * Diagnostic — synchronously tests SMTP by sending a tiny test message to
+ * the address in the `to` query string. Returns 200 with the accepted/
+ * rejected lists and SMTP response, or 500 with the verbatim SMTP error.
+ *
+ * Only enabled when DEBUG_ERRORS=true so this can't be abused to spam.
+ * Pass ?to=you@example.com (defaults to SMTP_FROM if omitted).
+ */
+app.get('/api/diag/email', async (c) => {
+  const e = env();
+  if (!e.DEBUG_ERRORS) {
+    return c.json({ error: 'Set DEBUG_ERRORS=true on the server to enable.' }, 403);
+  }
+  const to = c.req.query('to') ?? e.SMTP_FROM;
+  const { sendTestEmail } = await import('./auth/email.js');
+  try {
+    const result = await sendTestEmail({ to });
+    return c.json({
+      ok: true,
+      to,
+      smtp: {
+        host: e.SMTP_HOST,
+        port: e.SMTP_PORT,
+        user: e.SMTP_USER,
+        from: e.SMTP_FROM,
+      },
+      result,
+    });
+  } catch (err) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const x = err as any;
+    return c.json(
+      {
+        ok: false,
+        to,
+        smtp: {
+          host: e.SMTP_HOST,
+          port: e.SMTP_PORT,
+          user: e.SMTP_USER,
+          from: e.SMTP_FROM,
+        },
+        error: {
+          name: x?.name,
+          message: x?.message,
+          code: x?.code,
+          command: x?.command,
+          response: x?.response,
+          responseCode: x?.responseCode,
+        },
+      },
+      500,
+    );
+  }
+});
+
 // Stripe webhook MUST come before any other middleware that mutates the body.
 // requestLogger is fine (read-only); cors() is also fine because Stripe's
 // servers don't trigger preflight. We mount stripeRoute alongside the others

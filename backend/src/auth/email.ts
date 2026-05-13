@@ -48,6 +48,35 @@ export async function sendVerificationEmail(args: { to: string; token: string })
   log.info(`sent verification email to ${args.to}`);
 }
 
+/**
+ * Diagnostic — used by /api/diag/email. Sends a tiny test message and
+ * returns the SMTP server's accepted/rejected result. Throws on auth or
+ * connection failure so the caller can surface the error verbatim.
+ */
+export async function sendTestEmail(args: { to: string }): Promise<{
+  accepted: string[];
+  rejected: string[];
+  response: string;
+  messageId: string;
+}> {
+  const t = transport();
+  // verify() does the auth/handshake without sending — fail fast.
+  await t.verify();
+  const info = await t.sendMail({
+    from: fromAddress(),
+    to: args.to,
+    subject: 'Lens — SMTP diagnostic',
+    text: 'If you can read this, your Plesk SMTP credentials are wired correctly.',
+  });
+  log.info(`sent SMTP diagnostic email to ${args.to}`);
+  return {
+    accepted: (info.accepted ?? []).map(String),
+    rejected: (info.rejected ?? []).map(String),
+    response: info.response,
+    messageId: info.messageId,
+  };
+}
+
 export async function sendPasswordResetEmail(args: { to: string; token: string }): Promise<void> {
   const url = `${frontendUrl()}/reset-password?token=${args.token}`;
   const html = `
