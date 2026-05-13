@@ -131,10 +131,7 @@ app.onError((err, c) => {
   // guess which route, request, or call threw. Uses the per-request logger
   // (which carries reqId) when available, otherwise a fresh one.
   const log = (c.get('log' as never) as Logger | undefined) ?? fallbackLogger('unhandled');
-  const errInfo =
-    err instanceof Error
-      ? { name: err.name, message: err.message, stack: err.stack }
-      : { value: String(err) };
+  const errInfo = extractErrorInfo(err);
   log.error('[unhandled]', {
     method: c.req.method,
     path: c.req.path,
@@ -143,13 +140,34 @@ app.onError((err, c) => {
 
   // In debug mode, surface the cause in the response body too. Off in
   // production unless DEBUG_ERRORS=true is explicitly set on the host.
-  if (env().DEBUG_ERRORS && err instanceof Error) {
-    return c.json(
-      { error: 'Internal Server Error', cause: err.message, name: err.name },
-      500,
-    );
+  if (env().DEBUG_ERRORS) {
+    return c.json({ error: 'Internal Server Error', ...errInfo }, 500);
   }
   return c.json({ error: 'Internal Server Error' }, 500);
 });
+
+/**
+ * Pull as much detail as possible out of an unknown error, including
+ * mysql2-specific fields (code, errno, sqlMessage, sqlState) and the
+ * ES2022 chained `cause` when present. Drizzle wraps mysql errors with a
+ * "Failed query: ..." message, so the real cause is usually one level deep.
+ */
+function extractErrorInfo(err: unknown): Record<string, unknown> {
+  if (!(err instanceof Error)) return { value: String(err) };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const e = err as any;
+  const info: Record<string, unknown> = {
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+  };
+  for (const k of ['code', 'errno', 'sqlMessage', 'sqlState', 'constraint']) {
+    if (e[k] !== undefined) info[k] = e[k];
+  }
+  if (err.cause) {
+    info.cause = extractErrorInfo(err.cause);
+  }
+  return info;
+}
 
 app.notFound((c) => c.json({ error: 'Not Found' }, 404));
