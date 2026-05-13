@@ -90,10 +90,13 @@ authRoute.post('/sign-up', async (c) => {
     return c.json({ ok: true, email: user.email });
   } catch (err) {
     if (err instanceof EmailTakenError) {
-      // Don't leak that the email is taken — same response shape as success.
-      // Frontend always tells the user "check your email". This avoids
-      // email enumeration. If you'd prefer a clearer UX, return 409 here.
-      return c.json({ ok: true, email: parsed.data.email });
+      // Trade-off: this leaks "email exists" to attackers (vs anti-enumeration
+      // by returning ok:true), but the UX gain is large — users who forget
+      // they signed up get a clear "sign in instead" path rather than a
+      // mystery "no email arrived". Reasonable for a paid B2B-leaning tool.
+      throw new HTTPException(409, {
+        message: 'An account with this email already exists. Try signing in instead.',
+      });
     }
     log.error('signUp: user/token step threw', {
       error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),

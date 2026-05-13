@@ -12,12 +12,14 @@ function SignUpForm() {
   const [password, setPassword] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailTaken, setEmailTaken] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setEmailTaken(false);
     setInfo(null);
     if (!agreed) {
       setError('Please agree to the Privacy Policy and Terms of Service.');
@@ -30,6 +32,10 @@ function SignUpForm() {
           `Check your inbox at ${email} for a verification link, then come back and sign in.`,
         );
       } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          setEmailTaken(true);
+          return;
+        }
         const msg = err instanceof ApiError ? err.message.replace(/^API \d+: /, '') : 'Sign-up failed';
         setError(msg);
       }
@@ -87,6 +93,24 @@ function SignUpForm() {
         </label>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
+        {emailTaken && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <p>An account already exists for <span className="font-medium">{email}</span>.</p>
+            <p className="mt-1">
+              <Link
+                href={`/sign-in?next=${encodeURIComponent(next)}`}
+                className="font-medium underline"
+              >
+                Sign in instead
+              </Link>
+              {' '}or{' '}
+              <Link href="/forgot-password" className="font-medium underline">
+                reset your password
+              </Link>
+              .
+            </p>
+          </div>
+        )}
         {info && <p className="text-sm text-emerald-600">{info}</p>}
 
         <button
