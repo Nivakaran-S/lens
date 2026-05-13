@@ -130,15 +130,82 @@ Rules:
 - Cross-check: EPC address vs title address.
 
 Output budget — these limits exist so the JSON fits in the response token cap; exceeding them silently truncates the response and FAILS the analysis. Stay strictly within them:
-- Each "quote" field (in risks[].evidence[]): max 250 characters of the verbatim source text. Truncate the prefix; do not paraphrase or summarise.
-- Each "text" field on covenants, easements, proprietorship_restrictions, and historic_conveyance.notable_covenants_imposed: max 400 characters of verbatim text. Truncate; do not paraphrase.
-- Each "summary" field: max 200 characters.
-- Each "explanation" on risks[]: max 500 characters.
-- risks[]: maximum 25 entries. If more than 25 issues exist, keep the highest-severity ones and merge similar items.
-- restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[], s106_obligations[], indemnity_insurance_required[], notable_conditions[], guarantees_provided[], alterations_done[], building_regs_provided[], planning_consents_provided[], ground_stability_concerns[], nearby_industrial_or_landfill_sites[], notable_observations[]: maximum 15 entries each. If more exist, keep the most material and add a final entry whose summary reads "[+N more not shown]".
-- headline_findings: 3–5 entries (no more), each "finding" max 220 characters.
-- buyer_questions_for_solicitor: 5–10 entries, each max 200 characters.
-- Omit any field whose value would be an empty string, empty array, or null. Output JSON only — no leading or trailing whitespace beyond a single newline at most.`;
+- Each "quote" field (in risks[].evidence[]): max 200 characters of the verbatim source text. Truncate the prefix; do not paraphrase or summarise.
+- Each "text" field on covenants, easements, proprietorship_restrictions, and historic_conveyance.notable_covenants_imposed: max 300 characters of verbatim text. Truncate; do not paraphrase.
+- Each "summary" field: max 180 characters.
+- Each "explanation" on risks[]: max 400 characters.
+- "executive_summary": max 500 characters.
+- risks[]: maximum 20 entries. If more than 20 issues exist, keep the highest-severity ones and merge similar items.
+- restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[], s106_obligations[], indemnity_insurance_required[], notable_conditions[], guarantees_provided[], alterations_done[], building_regs_provided[], planning_consents_provided[], ground_stability_concerns[], nearby_industrial_or_landfill_sites[], notable_observations[]: maximum 12 entries each. If more exist, keep the most material and add a final entry whose summary reads "[+N more not shown]".
+- headline_findings: 3–5 entries (no more), each "finding" max 200 characters.
+- buyer_questions_for_solicitor: 5–8 entries (no more), each max 180 characters. Each MUST be a plain JSON string, NOT an object — example: "What is the position on …?", not {"question": "…"}.
+- Omit any field whose value would be an empty string, empty array, or null. Output JSON only — no leading or trailing whitespace beyond a single newline at most.
+
+CRITICAL — JSON validity:
+- Output a single root JSON object. No text before { or after the closing }.
+- Use double quotes for every string. Escape literal " inside strings as \\".
+- No trailing commas. No JS-style comments. No undefined values.
+- Mentally re-check that every opened [ and { has a matching close before you finish.`;
+
+/**
+ * Best-effort repair of nearly-valid JSON. Most Gemini malformations are
+ * easy to fix from the tail: stray trailing braces, unbalanced [] / {},
+ * trailing commas before close-brackets, or text after the closing }.
+ *
+ * Returns the repaired string if any change was made, or null if there's
+ * nothing obvious to try. Caller should still wrap JSON.parse in try/catch.
+ */
+function tryRepairJson(s: string): string | null {
+  let out = s.trim();
+  if (!out.startsWith('{')) return null;
+
+  // 1. Trim anything after the last balanced closing brace at depth 0.
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let lastValidEnd = -1;
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i];
+    if (escape) { escape = false; continue; }
+    if (c === '\\') { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') {
+      depth--;
+      if (depth === 0) lastValidEnd = i;
+    }
+  }
+  if (lastValidEnd >= 0 && lastValidEnd < out.length - 1) {
+    out = out.slice(0, lastValidEnd + 1);
+  }
+
+  // 2. If we ended mid-object/array, try appending the missing closers.
+  depth = 0;
+  inString = false;
+  escape = false;
+  const stack: string[] = [];
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i];
+    if (escape) { escape = false; continue; }
+    if (c === '\\') { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === '{') stack.push('}');
+    else if (c === '[') stack.push(']');
+    else if (c === '}' || c === ']') stack.pop();
+  }
+  if (stack.length > 0) {
+    // Strip trailing comma (very common: `..., ` before EOF) so close works.
+    out = out.replace(/,\s*$/, '');
+    out += stack.reverse().join('');
+  }
+
+  // 3. Trailing-comma-before-close — the other common malformation.
+  out = out.replace(/,\s*([}\]])/g, '$1');
+
+  return out === s ? null : out;
+}
 
 // Extra rules appended to the system instruction when we retry in compact
 // mode after a truncated first attempt. These OVERRIDE the base-prompt
@@ -147,16 +214,17 @@ Output budget — these limits exist so the JSON fits in the response token cap;
 const COMPACT_SUFFIX = `
 
 Compact-mode overrides (this run only — these REPLACE the base output budget):
-- "quote" fields: max 120 characters (was 250).
-- "text" fields on covenants/easements/restrictions/conveyances: max 200 characters (was 400).
-- "explanation" on risks[]: max 300 characters (was 500).
-- "summary" fields: max 120 characters (was 200).
-- "executive_summary": max 400 characters (was 600).
-- risks[]: max 15 entries (was 25). Keep the highest-severity ones and merge similar items.
-- restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[]: max 8 entries each (was 15). Use a final "[+N more not shown]" summary entry if more exist.
-- headline_findings[]: produce exactly 3 entries (not 5). Each "finding" max 180 characters.
-- buyer_questions_for_solicitor: max 6 entries (was 10), each max 160 characters.
-- Truncate prefixes; never paraphrase. Omit any field whose value is empty/null/[]. Schema and required keys unchanged.`;
+- "quote" fields: max 100 characters.
+- "text" fields on covenants/easements/restrictions/conveyances: max 160 characters.
+- "explanation" on risks[]: max 240 characters.
+- "summary" fields: max 100 characters.
+- "executive_summary": max 300 characters.
+- risks[]: max 12 entries. Keep the highest-severity ones and merge similar items.
+- restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[]: max 6 entries each. Use a final "[+N more not shown]" summary entry if more exist.
+- headline_findings[]: produce exactly 3 entries (not 5). Each "finding" max 160 characters.
+- buyer_questions_for_solicitor: max 5 entries, each max 140 characters. Plain strings only — never objects.
+- Truncate prefixes; never paraphrase. Omit any field whose value is empty/null/[]. Schema and required keys unchanged.
+- Re-check brackets and quote escaping before emitting.`;
 
 type AttemptOutcome =
   | { ok: true; result: AnalyseAllResult }
@@ -205,18 +273,36 @@ async function attempt(parts: Part[], compact: boolean): Promise<AttemptOutcome>
     };
   }
 
-  let parsed: AnalyseAllResult;
+  let parsed: AnalyseAllResult | null = null;
+  let parseErrorMessage: string | null = null;
   try {
     parsed = JSON.parse(text) as AnalyseAllResult;
   } catch (err) {
+    parseErrorMessage = err instanceof Error ? err.message : String(err);
+    // Try a best-effort repair before giving up. Most failures are trailing
+    // commas, unbalanced brackets at the very end, or stray text after the
+    // last `}` — all fixable without changing the data.
+    const repaired = tryRepairJson(text);
+    if (repaired !== null) {
+      try {
+        parsed = JSON.parse(repaired) as AnalyseAllResult;
+        parseErrorMessage = null; // repaired successfully
+      } catch {
+        // Fall through — the repair didn't work either.
+      }
+    }
+  }
+
+  if (!parsed) {
     return {
       ok: false,
-      // Treat parse failure with non-STOP finish reasons as a truncation
-      // candidate too — Gemini occasionally returns OTHER/SAFETY mid-stream.
-      truncated: finishReason !== 'STOP',
-      reason: `JSON.parse failed (finishReason=${finishReason}): ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      // Any parse failure is recoverable via compact mode (which produces a
+      // smaller, less complex output the model is less likely to mangle).
+      // We previously only retried on truncation, which missed cases like
+      // this one where finishReason=STOP but the JSON ended with a stray
+      // closing brace.
+      truncated: true,
+      reason: `JSON.parse failed (finishReason=${finishReason}): ${parseErrorMessage}`,
       length: text.length,
       tail: text.slice(-200).replace(/\s+/g, ' '),
     };
