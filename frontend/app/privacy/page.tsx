@@ -5,7 +5,7 @@ export const metadata = {
   description: 'How Lens collects, uses, and protects your personal data under UK GDPR.',
 };
 
-const CONTROLLER_EMAIL = 'info@healplace.com';
+const CONTROLLER_EMAIL = 'contact@checkmylegals.co.uk';
 const LAST_UPDATED = '11 May 2026';
 
 export default function PrivacyPage() {

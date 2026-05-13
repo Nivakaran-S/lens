@@ -34,8 +34,8 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Account & data</h1>
         <p className="mt-1 text-sm text-zinc-500">
           Manage your data under UK GDPR. Questions? Email{' '}
-          <a href="mailto:info@healplace.com" className="underline">
-            info@healplace.com
+          <a href="mailto:contact@checkmylegals.co.uk" className="underline">
+            contact@checkmylegals.co.uk
           </a>
           .
         </p>

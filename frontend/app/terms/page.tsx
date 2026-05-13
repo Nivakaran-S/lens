@@ -6,7 +6,7 @@ export const metadata = {
 };
 
 const LAST_UPDATED = '11 May 2026';
-const CONTACT_EMAIL = 'info@healplace.com';
+const CONTACT_EMAIL = 'contact@checkmylegals.co.uk';
 
 export default function TermsPage() {
   return (
