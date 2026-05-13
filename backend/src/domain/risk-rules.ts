@@ -39,6 +39,9 @@ export type Report = {
     lot_id?: string;
   };
   overall_risk: 'low' | 'medium' | 'high' | 'critical';
+  // Narrative 2–4 sentence "what is this pack" summary. May be missing on
+  // older jobs analysed before this field was introduced.
+  executive_summary?: string;
   // Legacy shape (string[]) is kept readable for old jobs persisted before
   // the source-citation change. New analyses always produce HeadlineFinding[].
   headline_findings: Array<HeadlineFinding | string>;

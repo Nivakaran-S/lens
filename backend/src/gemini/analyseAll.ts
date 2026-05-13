@@ -63,6 +63,7 @@ Output STRICT JSON in the exact shape below. No prose, no markdown, no code fenc
     "lot_id": <string if shown>
   },
   "overall_risk": <low|medium|high|critical>,
+  "executive_summary": <2–4 sentence narrative paragraph a buyer can read in 10 seconds to get the gist of the whole pack. Mention property type/tenure, vacant possession, key money figures (premium, completion period), and the headline risk if any. Plain English, no jargon. Max 600 characters.>,
   "headline_findings": [
     { "finding": <one short sentence a buyer reads first>,
       "sources": [<verbatim filename(s) of the document(s) that support this point — must match one of the filenames in the pack list above; usually 1, up to 3 if the finding synthesises across documents>]
@@ -150,6 +151,7 @@ Compact-mode overrides (this run only — these REPLACE the base output budget):
 - "text" fields on covenants/easements/restrictions/conveyances: max 200 characters (was 400).
 - "explanation" on risks[]: max 300 characters (was 500).
 - "summary" fields: max 120 characters (was 200).
+- "executive_summary": max 400 characters (was 600).
 - risks[]: max 15 entries (was 25). Keep the highest-severity ones and merge similar items.
 - restrictive_covenants[], easements[], proprietorship_restrictions[], charges[], planning_history[], enforcement_notices[]: max 8 entries each (was 15). Use a final "[+N more not shown]" summary entry if more exist.
 - headline_findings[]: produce exactly 3 entries (not 5). Each "finding" max 180 characters.

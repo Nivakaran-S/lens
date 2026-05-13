@@ -69,6 +69,9 @@ export type SynthesisReport = {
     lot_id?: string;
   };
   overall_risk: 'low' | 'medium' | 'high' | 'critical';
+  // Narrative 2–4 sentence "what is this pack" summary. May be missing on
+  // older jobs analysed before this field was introduced.
+  executive_summary?: string;
   // Old jobs persisted before the source-citation change have plain strings.
   // New analyses always produce HeadlineFinding objects; ReportView handles
   // both.

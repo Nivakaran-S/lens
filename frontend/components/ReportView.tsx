@@ -36,8 +36,20 @@ export function ReportView({ report }: { report: SynthesisReport }) {
     summary.address || summary.tenure || summary.title_number ||
     (summary.registered_owners?.length ?? 0) > 0 || summary.lot_id;
 
+  const executiveSummary = report.executive_summary?.trim();
+
   return (
     <section className="space-y-6">
+      {/* ── Executive summary ────────────────────────────────────── */}
+      {executiveSummary && (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-5 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <h2 className="text-base font-semibold">Summary</h2>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+            {executiveSummary}
+          </p>
+        </div>
+      )}
+
       {/* ── Property summary ─────────────────────────────────────── */}
       {hasSummary && (
         <div className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800">
