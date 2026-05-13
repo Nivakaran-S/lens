@@ -65,6 +65,7 @@ export type SynthesisReport = {
     address?: string;
     tenure?: string;
     registered_owners?: string[];
+    title_number?: string;
     lot_id?: string;
   };
   overall_risk: 'low' | 'medium' | 'high' | 'critical';
