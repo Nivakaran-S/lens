@@ -35,13 +35,15 @@ export function DocumentList({ jobId, documents }: { jobId: string; documents: J
 }
 
 function DocumentRow({ jobId, doc }: { jobId: string; doc: JobDocument }) {
-  const [open, setOpen] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
-  const [pending, startTransition] = useTransition();
   const extraction = doc.extraction && typeof doc.extraction === 'object'
     ? (doc.extraction as Record<string, unknown>)
     : null;
   const hasExtraction = extraction !== null && Object.keys(extraction).length > 0;
+  // Default to expanded so users see the per-doc summary at a glance.
+  // Collapsing is still available via the chevron toggle.
+  const [open, setOpen] = useState(hasExtraction);
+  const [showRaw, setShowRaw] = useState(false);
+  const [pending, startTransition] = useTransition();
 
   function viewPdf() {
     startTransition(async () => {

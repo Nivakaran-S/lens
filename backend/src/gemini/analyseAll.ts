@@ -327,6 +327,8 @@ async function attempt(parts: Part[], compact: boolean): Promise<AttemptOutcome>
       report: {
         property_summary: r.property_summary as Report['property_summary'],
         overall_risk: (r.overall_risk as Report['overall_risk']) ?? 'low',
+        executive_summary:
+          typeof r.executive_summary === 'string' ? r.executive_summary : undefined,
         headline_findings: (r.headline_findings as Report['headline_findings']) ?? [],
         risks: (r.risks as Report['risks']) ?? [],
         cross_document_consistency:

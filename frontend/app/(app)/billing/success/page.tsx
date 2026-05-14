@@ -1,18 +1,22 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Check, Coins, Loader2 } from 'lucide-react';
 import { api } from '../../../../lib/api';
 
 function BillingSuccessInner() {
+  const router = useRouter();
   const [credits, setCredits] = useState<number | null>(null);
   const [initialCredits, setInitialCredits] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tries, setTries] = useState(0);
+  const redirected = useRef(false);
 
-  // Poll /api/me for ~10s waiting for the Stripe webhook to land. Show the
-  // new balance once it changes from the initial reading.
+  // Poll /api/me for ~30s waiting for the Stripe webhook to land. Show the
+  // new balance once it changes from the initial reading, then auto-redirect
+  // the user to /dashboard so they're not stuck on a "Payment received" page.
   useEffect(() => {
     let cancelled = false;
     let cancel = false;
@@ -36,10 +40,15 @@ function BillingSuccessInner() {
       tick();
     }, 1500);
 
-    // Stop polling after 30s — webhook should land within ~5s normally.
+    // Hard stop after 30s. If the webhook still hasn't landed, send the user
+    // to the dashboard with a hint — beats trapping them on a spinner.
     const stopAt = setTimeout(() => {
       cancel = true;
       clearInterval(interval);
+      if (!redirected.current) {
+        redirected.current = true;
+        router.replace('/dashboard?payment=pending');
+      }
     }, 30_000);
 
     return () => {
@@ -47,9 +56,19 @@ function BillingSuccessInner() {
       clearInterval(interval);
       clearTimeout(stopAt);
     };
-  }, [initialCredits]);
+  }, [initialCredits, router]);
 
   const updated = initialCredits !== null && credits !== null && credits > initialCredits;
+
+  // Once the credits update is observed, show the confirmation briefly then
+  // navigate to the dashboard. Guarded by `redirected` so the timeout-redirect
+  // and this one can't race.
+  useEffect(() => {
+    if (!updated || redirected.current) return;
+    redirected.current = true;
+    const t = setTimeout(() => router.replace('/dashboard'), 2500);
+    return () => clearTimeout(t);
+  }, [updated, router]);
 
   return (
     <div className="mx-auto max-w-md py-12 text-center">
