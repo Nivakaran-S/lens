@@ -13,6 +13,33 @@ export type { DocumentDoc as DocumentRow, JobDoc as JobRow, JobStatus };
 
 const now = () => new Date().toISOString().slice(0, 23).replace('T', ' ');
 
+/**
+ * mysql2 + Drizzle's json() column type sometimes hands back the raw JSON
+ * STRING rather than a parsed object — depends on driver version and the
+ * `dateStrings: true` connection option we're using. If we don't normalise
+ * here, every consumer of `job.report` / `doc.extraction` gets a string and
+ * `typeof === 'object'` checks downstream silently fail (frontend shows no
+ * report panels, dashboard shows no risk badge, etc.).
+ *
+ * Always normalise reads from the JSON columns at this single boundary.
+ */
+function parseJsonField<T>(v: T): T {
+  if (typeof v !== 'string') return v;
+  try {
+    return JSON.parse(v) as T;
+  } catch {
+    return v;
+  }
+}
+
+function hydrateJob(row: JobDoc): JobDoc {
+  return { ...row, report: parseJsonField(row.report) };
+}
+
+function hydrateDocument(row: DocumentDoc): DocumentDoc {
+  return { ...row, extraction: parseJsonField(row.extraction) };
+}
+
 type JobInsert = {
   id?: string;
   user_id: string;
@@ -61,24 +88,26 @@ export async function updateJob(id: string, values: JobUpdate): Promise<void> {
 
 export async function getJob(id: string): Promise<JobDoc | null> {
   const rows = await db().select().from(jobs).where(eq(jobs.id, id)).limit(1);
-  return rows[0] ?? null;
+  return rows[0] ? hydrateJob(rows[0]) : null;
 }
 
 export async function listJobsForUser(userId: string, limit = 50): Promise<JobDoc[]> {
-  return db()
+  const rows = await db()
     .select()
     .from(jobs)
     .where(eq(jobs.user_id, userId))
     .orderBy(desc(jobs.created_at))
     .limit(limit);
+  return rows.map(hydrateJob);
 }
 
 export async function listDocumentsForJob(jobId: string): Promise<DocumentDoc[]> {
-  return db()
+  const rows = await db()
     .select()
     .from(documents)
     .where(eq(documents.job_id, jobId))
     .orderBy(asc(documents.created_at));
+  return rows.map(hydrateDocument);
 }
 
 type DocumentInsert = {
@@ -120,5 +149,5 @@ export async function updateDocument(id: string, values: DocumentUpdate): Promis
 
 export async function getDocument(id: string): Promise<DocumentDoc | null> {
   const rows = await db().select().from(documents).where(eq(documents.id, id)).limit(1);
-  return rows[0] ?? null;
+  return rows[0] ? hydrateDocument(rows[0]) : null;
 }
