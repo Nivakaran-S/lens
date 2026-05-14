@@ -58,9 +58,11 @@ function DocumentRow({
     ? (doc.extraction as Record<string, unknown>)
     : null;
   const hasExtraction = extraction !== null && Object.keys(extraction).length > 0;
-  // Default to expanded so users see the per-doc summary at a glance.
-  // Collapsing is still available via the chevron toggle.
-  const [open, setOpen] = useState(hasExtraction);
+  // After analysis finishes the panel should always be reachable — even if
+  // extraction is null/empty. ExtractionSummary handles the empty case with
+  // its own "No structured fields…" message, which is much better UX than
+  // the row collapsing silently with no hint that the doc was processed.
+  const [open, setOpen] = useState(analysisFinished);
   const [showRaw, setShowRaw] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -82,10 +84,10 @@ function DocumentRow({
           onClick={() => setOpen((v) => !v)}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
           aria-expanded={open}
-          disabled={!hasExtraction}
+          disabled={!analysisFinished}
         >
           <ChevronDown
-            className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''} ${hasExtraction ? 'text-zinc-500' : 'text-zinc-300 dark:text-zinc-700'}`}
+            className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''} ${analysisFinished ? 'text-zinc-500' : 'text-zinc-300 dark:text-zinc-700'}`}
             aria-hidden
           />
           <span className="min-w-0 flex-1 truncate text-sm">{doc.filename}</span>
@@ -125,21 +127,25 @@ function DocumentRow({
           {pending ? 'Opening…' : 'View PDF'}
         </button>
       </div>
-      {open && hasExtraction && extraction && (
+      {open && analysisFinished && (
         <div className="border-t border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950">
           <ExtractionSummary docType={doc.doc_type} extraction={extraction} />
-          <div className="mt-3 border-t border-zinc-200 pt-2 text-right dark:border-zinc-800">
-            <button
-              onClick={() => setShowRaw((v) => !v)}
-              className="text-[11px] text-zinc-500 underline hover:text-zinc-900 dark:hover:text-zinc-200"
-            >
-              {showRaw ? 'Hide raw JSON' : 'Show raw JSON'}
-            </button>
-          </div>
-          {showRaw && (
-            <pre className="mt-2 max-h-96 overflow-auto rounded border border-zinc-200 bg-white p-2 text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+          {hasExtraction && extraction && (
+            <>
+              <div className="mt-3 border-t border-zinc-200 pt-2 text-right dark:border-zinc-800">
+                <button
+                  onClick={() => setShowRaw((v) => !v)}
+                  className="text-[11px] text-zinc-500 underline hover:text-zinc-900 dark:hover:text-zinc-200"
+                >
+                  {showRaw ? 'Hide raw JSON' : 'Show raw JSON'}
+                </button>
+              </div>
+              {showRaw && (
+                <pre className="mt-2 max-h-96 overflow-auto rounded border border-zinc-200 bg-white p-2 text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
 {JSON.stringify(extraction, null, 2)}
-            </pre>
+                </pre>
+              )}
+            </>
           )}
         </div>
       )}
@@ -261,8 +267,20 @@ function ExtractionSummary({
   extraction,
 }: {
   docType: string | null;
-  extraction: Record<string, unknown>;
+  extraction: Record<string, unknown> | null;
 }) {
+  // Null / empty extraction: tell the user explicitly rather than collapsing
+  // the panel. This is what they see for older jobs that pre-date the
+  // defensive backend write, or for any future job where the analyser
+  // returned no structured fields.
+  if (!extraction || Object.keys(extraction).length === 0) {
+    return (
+      <p className="text-xs italic text-zinc-500">
+        No structured fields extracted for this document.
+      </p>
+    );
+  }
+
   const fields: { key: string; label: string }[] =
     docType && FIELDS_BY_TYPE[docType] ? FIELDS_BY_TYPE[docType] : [];
 

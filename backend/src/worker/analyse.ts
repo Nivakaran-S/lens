@@ -15,6 +15,12 @@ import { getObjectBuffer, pdfObjectKey, putObject } from '../storage/fs.js';
 import { logger as fallbackLogger, type Logger } from '../util/log.js';
 import { extractPdfsFromZip } from '../zip/extract.js';
 
+function isMeaningfulExtraction(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v !== 'object') return false;
+  return Object.keys(v as Record<string, unknown>).length > 0;
+}
+
 /**
  * Background pipeline that runs after a successful upload. Replaces the
  * Inngest analyze-pack workflow with a plain async function — appropriate
@@ -114,9 +120,18 @@ export async function runAnalysis(jobId: string, logArg?: Logger): Promise<void>
         continue;
       }
       matchedDocIds.add(matching.id);
+      // Never persist null/empty extraction. The frontend uses the
+      // presence of structured data to decide whether to render the
+      // per-doc panel, so a sparse Gemini output (empty object or missing
+      // field) used to cause the row to render blank with no hint that
+      // analysis had completed. Substitute a small placeholder so the
+      // panel always has something to display.
+      const ext = isMeaningfulExtraction(docResult.extraction)
+        ? docResult.extraction
+        : { summary: 'Analyser produced no structured fields for this document.' };
       await updateDocument(matching.id, {
         doc_type: docResult.doc_type as DocType,
-        extraction: docResult.extraction,
+        extraction: ext,
       });
     }
     // Anything Gemini didn't classify gets explicitly marked 'other' with

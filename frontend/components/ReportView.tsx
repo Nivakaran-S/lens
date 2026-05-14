@@ -48,7 +48,6 @@ export function ReportView({ report }: { report: SynthesisReport }) {
       .filter(Boolean)
       .slice(0, 3)
       .join(' ');
-    if (!headlinesText && !summary.address) return null;
     const parts: string[] = [];
     if (summary.address) {
       parts.push(
@@ -58,7 +57,11 @@ export function ReportView({ report }: { report: SynthesisReport }) {
       );
     }
     if (headlinesText) parts.push(headlinesText);
-    return parts.join(' ').trim() || null;
+    const synthesised = parts.join(' ').trim();
+    if (synthesised) return synthesised;
+    // Final fallback — always render the Summary panel after analysis,
+    // even when Gemini produced almost nothing. Empty data is information.
+    return 'Detailed summary not available for this analysis. See the findings below for risks, and the documents list for per-document fields.';
   })();
 
   return (
