@@ -3,7 +3,9 @@
 import { useState, useTransition } from 'react';
 import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
-import type { JobDocument } from '../lib/types';
+import type { JobDocument, JobStatus } from '../lib/types';
+
+const TERMINAL_STATES: ReadonlySet<JobStatus> = new Set<JobStatus>(['done', 'failed']);
 
 const DOC_TYPE_LABEL: Record<string, string> = {
   title_register: 'Title register',
@@ -21,20 +23,37 @@ const DOC_TYPE_LABEL: Record<string, string> = {
   other: 'Other',
 };
 
-export function DocumentList({ jobId, documents }: { jobId: string; documents: JobDocument[] }) {
+export function DocumentList({
+  jobId,
+  documents,
+  jobStatus,
+}: {
+  jobId: string;
+  documents: JobDocument[];
+  jobStatus: JobStatus;
+}) {
+  const analysisFinished = TERMINAL_STATES.has(jobStatus);
   return (
     <section>
       <h2 className="mb-3 text-base font-semibold">Documents in this pack</h2>
       <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
         {documents.map((d) => (
-          <DocumentRow key={d.id} jobId={jobId} doc={d} />
+          <DocumentRow key={d.id} jobId={jobId} doc={d} analysisFinished={analysisFinished} />
         ))}
       </ul>
     </section>
   );
 }
 
-function DocumentRow({ jobId, doc }: { jobId: string; doc: JobDocument }) {
+function DocumentRow({
+  jobId,
+  doc,
+  analysisFinished,
+}: {
+  jobId: string;
+  doc: JobDocument;
+  analysisFinished: boolean;
+}) {
   const extraction = doc.extraction && typeof doc.extraction === 'object'
     ? (doc.extraction as Record<string, unknown>)
     : null;
@@ -75,14 +94,21 @@ function DocumentRow({ jobId, doc }: { jobId: string; doc: JobDocument }) {
           {doc.doc_type ? (
             <span
               className={
-                hasExtraction
+                hasExtraction || analysisFinished
                   ? 'text-zinc-700 dark:text-zinc-300'
                   : 'flex items-center gap-1 text-amber-700 dark:text-amber-300'
               }
             >
-              {!hasExtraction && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
+              {!hasExtraction && !analysisFinished && (
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              )}
               {DOC_TYPE_LABEL[doc.doc_type] ?? doc.doc_type}
             </span>
+          ) : analysisFinished ? (
+            // Analysis finished but Gemini didn't return a doc_type for this
+            // file. Backend should auto-mark these as 'other', but if it
+            // didn't (older jobs), show a static label rather than spin forever.
+            <span className="text-zinc-400">Unclassified</span>
           ) : (
             <span className="flex items-center gap-1 text-zinc-500">
               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />

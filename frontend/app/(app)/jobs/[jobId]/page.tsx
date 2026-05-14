@@ -85,7 +85,9 @@ export default function JobPage({ params }: { params: Promise<{ jobId: string }>
 
       {job.report && <ReportView report={job.report} />}
 
-      {documents.length > 0 && <DocumentList jobId={jobId} documents={documents} />}
+      {documents.length > 0 && (
+        <DocumentList jobId={jobId} documents={documents} jobStatus={job.status} />
+      )}
     </div>
   );
 }

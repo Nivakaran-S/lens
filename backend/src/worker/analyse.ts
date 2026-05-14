@@ -89,16 +89,50 @@ export async function runAnalysis(jobId: string, logArg?: Logger): Promise<void>
     });
 
     // ── Step 4: persist per-doc analysis ───────────────────────────────
+    // Gemini occasionally returns filenames with subtle differences from
+    // what we sent (lowercased extension, trimmed whitespace, etc.) and
+    // the find() previously did exact match — those docs were silently
+    // skipped and stayed stuck on "Classifying…" forever on the frontend.
+    // Fall back to a case+whitespace-insensitive match before giving up.
+    const norm = (s: string) => s.trim().toLowerCase();
+    const matchedDocIds = new Set<string>();
     for (const docResult of result.documents) {
-      const matching = docs.find((d) => d.filename === docResult.filename);
+      let matching = docs.find((d) => d.filename === docResult.filename);
       if (!matching) {
-        log.warn('analyseAll returned a document not in the pack', { filename: docResult.filename });
+        matching = docs.find((d) => norm(d.filename) === norm(docResult.filename));
+        if (matching) {
+          log.info('per-doc match via case-insensitive fallback', {
+            geminiFilename: docResult.filename,
+            dbFilename: matching.filename,
+          });
+        }
+      }
+      if (!matching) {
+        log.warn('analyseAll returned a document not in the pack', {
+          filename: docResult.filename,
+        });
         continue;
       }
+      matchedDocIds.add(matching.id);
       await updateDocument(matching.id, {
         doc_type: docResult.doc_type as DocType,
         extraction: docResult.extraction,
       });
+    }
+    // Anything Gemini didn't classify gets explicitly marked 'other' with
+    // an empty extraction. This stops the frontend's "Classifying…" spinner
+    // and tells the user we know about the file but didn't categorise it.
+    for (const d of docs) {
+      if (!matchedDocIds.has(d.id)) {
+        log.warn(`doc not classified by analyseAll; marking as 'other'`, {
+          docId: d.id,
+          filename: d.filename,
+        });
+        await updateDocument(d.id, {
+          doc_type: 'other' as DocType,
+          extraction: { summary: 'Not classified by analyser.' },
+        });
+      }
     }
 
     // ── Step 5: apply UK-specific deterministic risk rules ─────────────

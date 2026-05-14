@@ -36,7 +36,30 @@ export function ReportView({ report }: { report: SynthesisReport }) {
     summary.address || summary.tenure || summary.title_number ||
     (summary.registered_owners?.length ?? 0) > 0 || summary.lot_id;
 
-  const executiveSummary = report.executive_summary?.trim();
+  // Older jobs analysed before executive_summary was preserved through the
+  // analyseAll lift won't have this field. Synthesise a fallback from
+  // property_summary + headlines so the user still sees a top-of-page
+  // overview rather than jumping straight into the risk badge.
+  const executiveSummary = (() => {
+    const explicit = report.executive_summary?.trim();
+    if (explicit) return explicit;
+    const headlinesText = headlines
+      .map((h) => (typeof h === 'object' && h !== null && 'finding' in h ? h.finding : (h as string)))
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(' ');
+    if (!headlinesText && !summary.address) return null;
+    const parts: string[] = [];
+    if (summary.address) {
+      parts.push(
+        `Pack analysis for ${summary.address}${
+          summary.tenure ? ` (${tenureLabel(summary.tenure)?.toLowerCase()})` : ''
+        }.`,
+      );
+    }
+    if (headlinesText) parts.push(headlinesText);
+    return parts.join(' ').trim() || null;
+  })();
 
   return (
     <section className="space-y-6">
